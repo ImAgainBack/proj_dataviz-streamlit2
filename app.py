@@ -63,7 +63,7 @@ def load_data():
             lat = float(parts[0].strip())
             lon = float(parts[1].strip())
             return lat, lon
-        except:
+        except (ValueError, AttributeError, IndexError):
             return None, None
     
     df[["Latitude", "Longitude"]] = df["Coordinates"].apply(
@@ -196,10 +196,12 @@ st.markdown('<p class="section-header">📊 Indicateurs Clés</p>', unsafe_allow
 col1, col2, col3, col4 = st.columns(4)
 
 with col1:
+    has_filters_applied = selected_cities or len(selected_pollutants) != len(all_pollutants)
+    delta_text = f"{len(df_filtered) - len(df)} par rapport au total" if has_filters_applied else None
     st.metric(
         label="🔬 Mesures",
         value=f"{len(df_filtered):,}",
-        delta=f"{len(df_filtered) - len(df)} par rapport au total" if selected_cities or len(selected_pollutants) != len(all_pollutants) else None
+        delta=delta_text
     )
 
 with col2:
@@ -330,9 +332,6 @@ with col1:
     }).round(2)
     pollutant_stats.columns = ["Moyenne", "Maximum", "Minimum", "Écart-type"]
     pollutant_stats = pollutant_stats.reset_index()
-    
-    fig_radar_data = pollutant_stats[["Pollutant", "Moyenne"]].copy()
-    fig_radar_data["Moyenne_Norm"] = (fig_radar_data["Moyenne"] - fig_radar_data["Moyenne"].min()) / (fig_radar_data["Moyenne"].max() - fig_radar_data["Moyenne"].min() + 0.001)
     
     fig_pie = px.pie(
         df_filtered,
