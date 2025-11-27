@@ -111,7 +111,7 @@ def create_map(df_filtered):
         pollutant = row["Pollutant"]
         info = get_pollutant_info(pollutant)
         
-        if value < 20:
+        if value < 25:
             color = "green"
         elif value < 50:
             color = "orange"
@@ -150,6 +150,34 @@ mesurent la qualité de l'air en France. Cette application vous permet d'explore
 les tendances de pollution et d'identifier les zones les plus touchées.
 </div>
 """, unsafe_allow_html=True)
+
+with st.expander("📚 Comprendre les polluants"):
+    st.markdown("""
+    ### NO2 (Dioxyde d'azote)
+    - **Sources** : Trafic routier, centrales thermiques, chauffage
+    - **Effets santé** : Irritation des voies respiratoires, aggravation de l'asthme
+    - **Seuil OMS** : 25 µg/m³ (moyenne annuelle)
+    
+    ### PM10 / PM2.5 (Particules fines)
+    - **Sources** : Combustion (véhicules, industrie, chauffage), poussières naturelles
+    - **Effets santé** : Maladies cardiovasculaires et respiratoires, cancers
+    - **Seuil OMS** : PM2.5: 15 µg/m³ | PM10: 45 µg/m³ (moyenne annuelle)
+    
+    ### O3 (Ozone)
+    - **Sources** : Formé par réaction photochimique (NOx + COV + UV)
+    - **Effets santé** : Irritation des yeux et voies respiratoires, crises d'asthme
+    - **Seuil OMS** : 100 µg/m³ (moyenne sur 8h)
+    
+    ### SO2 (Dioxyde de soufre)
+    - **Sources** : Combustion de combustibles fossiles (charbon, pétrole), industrie
+    - **Effets santé** : Irritation des voies respiratoires, bronchites
+    - **Seuil OMS** : 40 µg/m³ (moyenne sur 24h)
+    
+    ### CO (Monoxyde de carbone)
+    - **Sources** : Combustion incomplète (véhicules, chauffage défectueux)
+    - **Effets santé** : Maux de tête, vertiges, intoxication grave à forte dose
+    - **Seuil OMS** : 4 mg/m³ (moyenne sur 24h)
+    """)
 
 st.sidebar.markdown("### 🇫🇷")
 st.sidebar.title("🎛️ Filtres")
@@ -193,6 +221,10 @@ if date_range and len(date_range) == 2:
 
 st.markdown('<p class="section-header">📊 Indicateurs Clés</p>', unsafe_allow_html=True)
 
+years = sorted(df_filtered["Year"].dropna().unique())
+current_year = max(years) if years else None
+prev_year = years[-2] if len(years) >= 2 else None
+
 col1, col2, col3, col4 = st.columns(4)
 
 with col1:
@@ -206,16 +238,32 @@ with col1:
 
 with col2:
     avg_value = df_filtered["Value"].mean()
+    avg_delta = None
+    if current_year and prev_year:
+        current_avg = df_filtered[df_filtered["Year"] == current_year]["Value"].mean()
+        prev_avg = df_filtered[df_filtered["Year"] == prev_year]["Value"].mean()
+        if pd.notna(current_avg) and pd.notna(prev_avg) and prev_avg > 0:
+            avg_delta = f"{((current_avg - prev_avg) / prev_avg * 100):.1f}% vs {prev_year}"
     st.metric(
         label="📈 Concentration moyenne",
-        value=f"{avg_value:.1f} µg/m³"
+        value=f"{avg_value:.1f} µg/m³",
+        delta=avg_delta,
+        delta_color="inverse"
     )
 
 with col3:
     max_value = df_filtered["Value"].max()
+    max_delta = None
+    if current_year and prev_year:
+        current_max = df_filtered[df_filtered["Year"] == current_year]["Value"].max()
+        prev_max = df_filtered[df_filtered["Year"] == prev_year]["Value"].max()
+        if pd.notna(current_max) and pd.notna(prev_max) and prev_max > 0:
+            max_delta = f"{((current_max - prev_max) / prev_max * 100):.1f}% vs {prev_year}"
     st.metric(
         label="⚠️ Maximum observé",
-        value=f"{max_value:.1f} µg/m³"
+        value=f"{max_value:.1f} µg/m³",
+        delta=max_delta,
+        delta_color="inverse"
     )
 
 with col4:
@@ -225,14 +273,27 @@ with col4:
         value=n_cities
     )
 
+st.download_button(
+    label="📥 Télécharger les données",
+    data=df_filtered.to_csv(index=False),
+    file_name="qualite_air_export.csv",
+    mime="text/csv"
+)
+
 st.markdown('<p class="section-header">🗺️ Carte des Stations de Mesure</p>', unsafe_allow_html=True)
 
 st.markdown("""
-La carte ci-dessous montre les stations de mesure en France. Les couleurs indiquent le niveau de pollution :
-- 🟢 **Vert** : Bon (< 20 µg/m³)
-- 🟠 **Orange** : Modéré (20-50 µg/m³)  
-- 🔴 **Rouge** : Élevé (> 50 µg/m³)
-""")
+<div style="background-color: #f8f9fa; padding: 1rem; border-radius: 8px; margin-bottom: 1rem;">
+<strong>Légende des couleurs (concentration en µg/m³) :</strong>
+<table style="width: 100%; margin-top: 0.5rem;">
+<tr>
+<td style="text-align: center;"><span style="background-color: green; color: white; padding: 4px 12px; border-radius: 4px;">🟢 Bon</span><br><small>&lt; 25</small></td>
+<td style="text-align: center;"><span style="background-color: orange; color: white; padding: 4px 12px; border-radius: 4px;">🟠 Modéré</span><br><small>25 - 50</small></td>
+<td style="text-align: center;"><span style="background-color: red; color: white; padding: 4px 12px; border-radius: 4px;">🔴 Élevé</span><br><small>&gt; 50</small></td>
+</tr>
+</table>
+</div>
+""", unsafe_allow_html=True)
 
 if len(df_filtered) > 0:
     map_data = df_filtered.groupby(["City", "Location", "Latitude", "Longitude", "Pollutant"]).agg({
@@ -322,6 +383,67 @@ with col2:
     )
     st.plotly_chart(fig_heatmap, use_container_width=True)
 
+st.markdown('<p class="section-header">🆚 Comparateur de Villes</p>', unsafe_allow_html=True)
+
+compare_cities = st.multiselect(
+    "Sélectionnez 2-3 villes à comparer",
+    options=all_cities,
+    default=[],
+    max_selections=3
+)
+
+if len(compare_cities) >= 2:
+    df_compare = df_filtered[df_filtered["City"].isin(compare_cities)]
+    city_pollutant_compare = df_compare.groupby(["City", "Pollutant"])["Value"].mean().reset_index()
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        fig_radar = go.Figure()
+        for city in compare_cities:
+            city_data = city_pollutant_compare[city_pollutant_compare["City"] == city]
+            fig_radar.add_trace(go.Scatterpolar(
+                r=city_data["Value"].tolist(),
+                theta=city_data["Pollutant"].tolist(),
+                fill='toself',
+                name=city
+            ))
+        fig_radar.update_layout(
+            polar=dict(radialaxis=dict(visible=True)),
+            title="Comparaison Radar des Polluants",
+            showlegend=True
+        )
+        st.plotly_chart(fig_radar, use_container_width=True)
+    
+    with col2:
+        cols = st.columns(len(compare_cities))
+        for i, city in enumerate(compare_cities):
+            with cols[i]:
+                st.markdown(f"**{city}**")
+                city_stats = df_compare[df_compare["City"] == city]["Value"]
+                st.metric("Moyenne", f"{city_stats.mean():.1f} µg/m³")
+                st.metric("Maximum", f"{city_stats.max():.1f} µg/m³")
+                st.metric("Mesures", f"{len(city_stats)}")
+else:
+    st.info("Sélectionnez au moins 2 villes pour les comparer.")
+
+st.markdown('<p class="section-header">🏆 Classement des Villes</p>', unsafe_allow_html=True)
+
+city_avg = df_filtered.groupby("City")["Value"].mean().sort_values(ascending=False)
+
+col1, col2 = st.columns(2)
+
+with col1:
+    st.markdown("#### 🔴 Top 5 - Plus polluées")
+    for i, (city, value) in enumerate(city_avg.head(5).items(), 1):
+        st.markdown(f"{i}. **{city}** - {value:.1f} µg/m³")
+
+with col2:
+    st.markdown("#### 🟢 Top 5 - Moins polluées")
+    least_polluted = city_avg.tail(5).sort_values(ascending=True)
+    for i, (city, value) in enumerate(least_polluted.items(), 1):
+        st.markdown(f"{i}. **{city}** - {value:.1f} µg/m³")
+
 st.markdown('<p class="section-header">🔬 Analyse par Polluant</p>', unsafe_allow_html=True)
 
 col1, col2 = st.columns(2)
@@ -407,9 +529,13 @@ tandis que <strong>{highest_city}</strong> est la ville avec les niveaux de poll
 """, unsafe_allow_html=True)
 
 st.markdown("---")
-st.markdown("""
+last_update = df["Last Updated"].max()
+last_update_str = last_update.strftime("%Y-%m-%d %H:%M") if pd.notna(last_update) else "N/A"
+st.markdown(f"""
 <div style="text-align: center; color: #6c757d; padding: 1rem;">
-    <p>📊 Données : OpenData - Qualité de l'Air en France | 🛠️ Développé avec Streamlit</p>
+    <p>📊 <strong>Source des données</strong> : European Environment Agency (EEA) - OpenData Qualité de l'Air</p>
+    <p>📅 <strong>Dernière mise à jour des données</strong> : {last_update_str}</p>
+    <p>🔗 <a href="https://github.com/ImAgainBack/proj_dataviz-streamlit2" target="_blank">Voir le projet sur GitHub</a></p>
     <p>💡 Cette application utilise des données publiques pour sensibiliser à la qualité de l'air.</p>
 </div>
 """, unsafe_allow_html=True)
