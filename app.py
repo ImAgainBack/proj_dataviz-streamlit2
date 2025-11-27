@@ -53,6 +53,42 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
+def normalize_city(city):
+    if pd.isna(city):
+        return city
+    city_upper = city.upper()
+    if 'PARIS' in city_upper and ('ARRONDISSEMENT' in city_upper or city_upper.startswith('PARIS ')):
+        return 'PARIS'
+    if 'MARSEILLE' in city_upper and ('ARRONDISSEMENT' in city_upper or city_upper.startswith('MARSEILLE ')):
+        return 'MARSEILLE'
+    if 'LYON' in city_upper and ('ARRONDISSEMENT' in city_upper or city_upper.startswith('LYON ')):
+        return 'LYON'
+    return city
+
+
+def is_valid_city(city):
+    if pd.isna(city) or city == '':
+        return False
+    if len(city) > 2 and city.startswith('FR') and city[2].isdigit():
+        return False
+    if city.startswith('ATMO'):
+        return False
+    if 'NET-' in city:
+        return False
+    return True
+
+
+POLLUTANT_THRESHOLDS = {
+    "PM2.5": {"good": 15, "moderate": 25},
+    "PM10": {"good": 45, "moderate": 75},
+    "NO2": {"good": 25, "moderate": 50},
+    "O3": {"good": 100, "moderate": 180},
+    "SO2": {"good": 40, "moderate": 100},
+    "CO": {"good": 4000, "moderate": 10000},
+    "NO": {"good": 25, "moderate": 50}
+}
+
+
 @st.cache_data
 def load_data():
     df = pd.read_csv("qualite-de-lair-france.csv", sep=";")
@@ -84,6 +120,10 @@ def load_data():
     
     df["City"] = df["City"].fillna(df["Location"])
     
+    df = df[df["City"].apply(is_valid_city)]
+    
+    df["City_Normalized"] = df["City"].apply(normalize_city)
+    
     return df
 
 
@@ -100,23 +140,29 @@ def get_pollutant_info(pollutant):
     return info.get(pollutant, {"name": pollutant, "color": "#7F8C8D", "icon": "📊"})
 
 
-def create_map(df_filtered):
+def get_color_for_value(value, pollutant):
+    thresholds = POLLUTANT_THRESHOLDS.get(pollutant, {"good": 25, "moderate": 50})
+    if value < thresholds["good"]:
+        return "green"
+    elif value < thresholds["moderate"]:
+        return "orange"
+    else:
+        return "red"
+
+
+def create_map(df_filtered, dark_mode=False):
     center_lat = df_filtered["Latitude"].mean()
     center_lon = df_filtered["Longitude"].mean()
     
-    m = folium.Map(location=[center_lat, center_lon], zoom_start=6, tiles="CartoDB positron")
+    tiles = "CartoDB dark_matter" if dark_mode else "CartoDB positron"
+    m = folium.Map(location=[center_lat, center_lon], zoom_start=6, tiles=tiles)
     
     for _, row in df_filtered.iterrows():
         value = row["Value"]
         pollutant = row["Pollutant"]
         info = get_pollutant_info(pollutant)
         
-        if value < 25:
-            color = "green"
-        elif value < 50:
-            color = "orange"
-        else:
-            color = "red"
+        color = get_color_for_value(value, pollutant)
         
         popup_text = f"""
         <b>{row['City']}</b><br>
@@ -153,34 +199,57 @@ les tendances de pollution et d'identifier les zones les plus touchées.
 
 with st.expander("📚 Comprendre les polluants"):
     st.markdown("""
-    ### NO2 (Dioxyde d'azote)
-    - **Sources** : Trafic routier, centrales thermiques, chauffage
-    - **Effets santé** : Irritation des voies respiratoires, aggravation de l'asthme
-    - **Seuil OMS** : 25 µg/m³ (moyenne annuelle)
-    
-    ### PM10 / PM2.5 (Particules fines)
-    - **Sources** : Combustion (véhicules, industrie, chauffage), poussières naturelles
-    - **Effets santé** : Maladies cardiovasculaires et respiratoires, cancers
+    ### PM2.5 et PM10 (Particules fines) - ⚠️ IMPACT TRÈS ÉLEVÉ
+    - **Sources** : Trafic routier, chauffage au bois, industrie, agriculture
+    - **Effets santé** : Pénètrent profondément dans les poumons (PM2.5 jusqu'au sang)
+    - **Risques** : Maladies cardiovasculaires, cancers, asthme
+    - **Prévalence** : Très présent en hiver (chauffage) et en zone urbaine dense
     - **Seuil OMS** : PM2.5: 15 µg/m³ | PM10: 45 µg/m³ (moyenne annuelle)
     
-    ### O3 (Ozone)
-    - **Sources** : Formé par réaction photochimique (NOx + COV + UV)
-    - **Effets santé** : Irritation des yeux et voies respiratoires, crises d'asthme
+    ### NO2 (Dioxyde d'azote) - ⚠️ IMPACT ÉLEVÉ
+    - **Sources** : Principalement le trafic routier (moteurs diesel)
+    - **Effets santé** : Irritation des voies respiratoires, aggrave l'asthme
+    - **Risques** : Bronchites chroniques, diminution fonction pulmonaire
+    - **Prévalence** : Très élevé le long des grands axes routiers
+    - **Seuil OMS** : 25 µg/m³ (moyenne annuelle)
+    
+    ### O3 (Ozone) - ⚠️ IMPACT ÉLEVÉ EN ÉTÉ
+    - **Sources** : Formé par réaction chimique (NOx + COV + soleil)
+    - **Effets santé** : Irritation yeux et voies respiratoires, toux
+    - **Risques** : Crises d'asthme, diminution capacité respiratoire
+    - **Prévalence** : Pics en été lors des canicules
     - **Seuil OMS** : 100 µg/m³ (moyenne sur 8h)
     
-    ### SO2 (Dioxyde de soufre)
-    - **Sources** : Combustion de combustibles fossiles (charbon, pétrole), industrie
-    - **Effets santé** : Irritation des voies respiratoires, bronchites
+    ### SO2 (Dioxyde de soufre) - IMPACT MODÉRÉ
+    - **Sources** : Industrie, centrales thermiques, transport maritime
+    - **Effets santé** : Irritation des bronches
+    - **Risques** : Aggravation de l'asthme et bronchites
+    - **Prévalence** : En baisse grâce aux régulations, reste élevé près des industries
     - **Seuil OMS** : 40 µg/m³ (moyenne sur 24h)
     
-    ### CO (Monoxyde de carbone)
-    - **Sources** : Combustion incomplète (véhicules, chauffage défectueux)
-    - **Effets santé** : Maux de tête, vertiges, intoxication grave à forte dose
+    ### CO (Monoxyde de carbone) - IMPACT LOCALISÉ
+    - **Sources** : Combustion incomplète (voitures, chauffage)
+    - **Effets santé** : Se fixe sur l'hémoglobine, réduit transport d'oxygène
+    - **Risques** : Maux de tête, vertiges, mortel à forte dose
+    - **Prévalence** : Rare en extérieur, problématique en intérieur
     - **Seuil OMS** : 4 mg/m³ (moyenne sur 24h)
+    
+    ### NO (Monoxyde d'azote) - IMPACT MODÉRÉ
+    - **Sources** : Trafic, se transforme rapidement en NO2
+    - **Effets santé** : Moins toxique que NO2 directement
+    - **Prévalence** : Marqueur du trafic routier
+    - **Seuil OMS** : 25 µg/m³
     """)
 
 st.sidebar.markdown("### 🇫🇷")
 st.sidebar.title("🎛️ Filtres")
+
+dark_mode = st.sidebar.toggle("🌙 Mode sombre", value=False)
+
+if dark_mode:
+    template = "plotly_dark"
+else:
+    template = "plotly_white"
 
 all_pollutants = sorted(df["Pollutant"].unique())
 selected_pollutants = st.sidebar.multiselect(
@@ -189,7 +258,7 @@ selected_pollutants = st.sidebar.multiselect(
     default=["NO2", "PM10", "O3"]
 )
 
-all_cities = sorted(df["City"].dropna().unique())
+all_cities = sorted(df["City_Normalized"].dropna().unique())
 selected_cities = st.sidebar.multiselect(
     "Villes",
     options=all_cities,
@@ -212,7 +281,7 @@ df_filtered = df.copy()
 if selected_pollutants:
     df_filtered = df_filtered[df_filtered["Pollutant"].isin(selected_pollutants)]
 if selected_cities:
-    df_filtered = df_filtered[df_filtered["City"].isin(selected_cities)]
+    df_filtered = df_filtered[df_filtered["City_Normalized"].isin(selected_cities)]
 if date_range and len(date_range) == 2:
     df_filtered = df_filtered[
         (df_filtered["Date"] >= date_range[0]) & 
@@ -267,7 +336,7 @@ with col3:
     )
 
 with col4:
-    n_cities = df_filtered["City"].nunique()
+    n_cities = df_filtered["City_Normalized"].nunique()
     st.metric(
         label="🏙️ Villes couvertes",
         value=n_cities
@@ -284,13 +353,16 @@ st.markdown('<p class="section-header">🗺️ Carte des Stations de Mesure</p>'
 
 st.markdown("""
 <div style="background-color: #f8f9fa; padding: 1rem; border-radius: 8px; margin-bottom: 1rem;">
-<strong>Légende des couleurs (concentration en µg/m³) :</strong>
-<table style="width: 100%; margin-top: 0.5rem;">
-<tr>
-<td style="text-align: center;"><span style="background-color: green; color: white; padding: 4px 12px; border-radius: 4px;">🟢 Bon</span><br><small>&lt; 25</small></td>
-<td style="text-align: center;"><span style="background-color: orange; color: white; padding: 4px 12px; border-radius: 4px;">🟠 Modéré</span><br><small>25 - 50</small></td>
-<td style="text-align: center;"><span style="background-color: red; color: white; padding: 4px 12px; border-radius: 4px;">🔴 Élevé</span><br><small>&gt; 50</small></td>
-</tr>
+<strong>Légende des couleurs (seuils OMS par polluant en µg/m³) :</strong>
+<table style="width: 100%; margin-top: 0.5rem; font-size: 0.9rem;">
+<tr><th>Polluant</th><th>🟢 Bon</th><th>🟠 Modéré</th><th>🔴 Élevé</th></tr>
+<tr><td>PM2.5</td><td>&lt; 15</td><td>15 - 25</td><td>&gt; 25</td></tr>
+<tr><td>PM10</td><td>&lt; 45</td><td>45 - 75</td><td>&gt; 75</td></tr>
+<tr><td>NO2</td><td>&lt; 25</td><td>25 - 50</td><td>&gt; 50</td></tr>
+<tr><td>O3</td><td>&lt; 100</td><td>100 - 180</td><td>&gt; 180</td></tr>
+<tr><td>SO2</td><td>&lt; 40</td><td>40 - 100</td><td>&gt; 100</td></tr>
+<tr><td>CO</td><td>&lt; 4000</td><td>4000 - 10000</td><td>&gt; 10000</td></tr>
+<tr><td>NO</td><td>&lt; 25</td><td>25 - 50</td><td>&gt; 50</td></tr>
 </table>
 </div>
 """, unsafe_allow_html=True)
@@ -304,7 +376,7 @@ if len(df_filtered) > 0:
     if len(map_data) > 500:
         map_data = map_data.sample(500, random_state=42)
     
-    m = create_map(map_data)
+    m = create_map(map_data, dark_mode)
     st_folium(m, width=None, height=500)
 else:
     st.warning("Aucune donnée à afficher avec les filtres sélectionnés.")
@@ -324,7 +396,8 @@ with col1:
         color="Pollutant",
         title="Évolution Mensuelle des Polluants",
         labels={"Value": "Concentration (µg/m³)", "Date": "Date", "Pollutant": "Polluant"},
-        color_discrete_map={p: get_pollutant_info(p)["color"] for p in all_pollutants}
+        color_discrete_map={p: get_pollutant_info(p)["color"] for p in all_pollutants},
+        template=template
     )
     fig_temporal.update_layout(
         hovermode="x unified",
@@ -343,7 +416,8 @@ with col2:
         title="Concentration Moyenne Annuelle",
         labels={"Value": "Concentration (µg/m³)", "Year": "Année", "Pollutant": "Polluant"},
         barmode="group",
-        color_discrete_map={p: get_pollutant_info(p)["color"] for p in all_pollutants}
+        color_discrete_map={p: get_pollutant_info(p)["color"] for p in all_pollutants},
+        template=template
     )
     st.plotly_chart(fig_bar, use_container_width=True)
 
@@ -352,56 +426,58 @@ st.markdown('<p class="section-header">🏙️ Comparaison par Ville</p>', unsaf
 col1, col2 = st.columns(2)
 
 with col1:
-    top_cities = df_filtered.groupby("City")["Value"].mean().nlargest(15).reset_index()
+    top_cities = df_filtered.groupby("City_Normalized")["Value"].mean().nlargest(15).reset_index()
     
     fig_cities = px.bar(
         top_cities,
         x="Value",
-        y="City",
+        y="City_Normalized",
         orientation="h",
         title="Top 15 Villes - Concentration Moyenne",
-        labels={"Value": "Concentration (µg/m³)", "City": "Ville"},
+        labels={"Value": "Concentration (µg/m³)", "City_Normalized": "Ville"},
         color="Value",
-        color_continuous_scale="RdYlGn_r"
+        color_continuous_scale="RdYlGn_r",
+        template=template
     )
     fig_cities.update_layout(yaxis={'categoryorder': 'total ascending'})
     st.plotly_chart(fig_cities, use_container_width=True)
 
 with col2:
-    city_pollutant = df_filtered.groupby(["City", "Pollutant"])["Value"].mean().reset_index()
-    top_10_cities = df_filtered.groupby("City")["Value"].mean().nlargest(10).index.tolist()
-    city_pollutant_top = city_pollutant[city_pollutant["City"].isin(top_10_cities)]
+    city_pollutant = df_filtered.groupby(["City_Normalized", "Pollutant"])["Value"].mean().reset_index()
+    top_10_cities = df_filtered.groupby("City_Normalized")["Value"].mean().nlargest(10).index.tolist()
+    city_pollutant_top = city_pollutant[city_pollutant["City_Normalized"].isin(top_10_cities)]
     
     fig_heatmap = px.density_heatmap(
         city_pollutant_top,
         x="Pollutant",
-        y="City",
+        y="City_Normalized",
         z="Value",
         title="Heatmap: Villes vs Polluants",
-        labels={"Value": "Concentration", "Pollutant": "Polluant", "City": "Ville"},
-        color_continuous_scale="YlOrRd"
+        labels={"Value": "Concentration", "Pollutant": "Polluant", "City_Normalized": "Ville"},
+        color_continuous_scale="YlOrRd",
+        template=template
     )
     st.plotly_chart(fig_heatmap, use_container_width=True)
 
 st.markdown('<p class="section-header">🆚 Comparateur de Villes</p>', unsafe_allow_html=True)
 
 compare_cities = st.multiselect(
-    "Sélectionnez 2-3 villes à comparer",
+    "Sélectionnez 2-5 villes à comparer",
     options=all_cities,
     default=[],
-    max_selections=3
+    max_selections=5
 )
 
 if len(compare_cities) >= 2:
-    df_compare = df_filtered[df_filtered["City"].isin(compare_cities)]
-    city_pollutant_compare = df_compare.groupby(["City", "Pollutant"])["Value"].mean().reset_index()
+    df_compare = df_filtered[df_filtered["City_Normalized"].isin(compare_cities)]
+    city_pollutant_compare = df_compare.groupby(["City_Normalized", "Pollutant"])["Value"].mean().reset_index()
     
     col1, col2 = st.columns(2)
     
     with col1:
         fig_radar = go.Figure()
         for city in compare_cities:
-            city_data = city_pollutant_compare[city_pollutant_compare["City"] == city]
+            city_data = city_pollutant_compare[city_pollutant_compare["City_Normalized"] == city]
             fig_radar.add_trace(go.Scatterpolar(
                 r=city_data["Value"].tolist(),
                 theta=city_data["Pollutant"].tolist(),
@@ -411,7 +487,8 @@ if len(compare_cities) >= 2:
         fig_radar.update_layout(
             polar=dict(radialaxis=dict(visible=True)),
             title="Comparaison Radar des Polluants",
-            showlegend=True
+            showlegend=True,
+            template=template
         )
         st.plotly_chart(fig_radar, use_container_width=True)
     
@@ -420,7 +497,7 @@ if len(compare_cities) >= 2:
         for i, city in enumerate(compare_cities):
             with cols[i]:
                 st.markdown(f"**{city}**")
-                city_stats = df_compare[df_compare["City"] == city]["Value"]
+                city_stats = df_compare[df_compare["City_Normalized"] == city]["Value"]
                 st.metric("Moyenne", f"{city_stats.mean():.1f} µg/m³")
                 st.metric("Maximum", f"{city_stats.max():.1f} µg/m³")
                 st.metric("Mesures", f"{len(city_stats)}")
@@ -429,7 +506,7 @@ else:
 
 st.markdown('<p class="section-header">🏆 Classement des Villes</p>', unsafe_allow_html=True)
 
-city_avg = df_filtered.groupby("City")["Value"].mean().sort_values(ascending=False)
+city_avg = df_filtered.groupby("City_Normalized")["Value"].mean().sort_values(ascending=False)
 
 col1, col2 = st.columns(2)
 
@@ -460,7 +537,8 @@ with col1:
         names="Pollutant",
         title="Répartition des Mesures par Polluant",
         color="Pollutant",
-        color_discrete_map={p: get_pollutant_info(p)["color"] for p in all_pollutants}
+        color_discrete_map={p: get_pollutant_info(p)["color"] for p in all_pollutants},
+        template=template
     )
     fig_pie.update_traces(textposition='inside', textinfo='percent+label')
     st.plotly_chart(fig_pie, use_container_width=True)
@@ -473,7 +551,8 @@ with col2:
         title="Distribution des Concentrations par Polluant",
         labels={"Value": "Concentration (µg/m³)", "Pollutant": "Polluant"},
         color="Pollutant",
-        color_discrete_map={p: get_pollutant_info(p)["color"] for p in all_pollutants}
+        color_discrete_map={p: get_pollutant_info(p)["color"] for p in all_pollutants},
+        template=template
     )
     fig_box.update_layout(showlegend=False)
     st.plotly_chart(fig_box, use_container_width=True)
@@ -515,7 +594,7 @@ with col2:
     """, unsafe_allow_html=True)
 
 highest_pollutant = df_filtered.groupby("Pollutant")["Value"].mean().idxmax()
-highest_city = df_filtered.groupby("City")["Value"].mean().idxmax()
+highest_city = df_filtered.groupby("City_Normalized")["Value"].mean().idxmax()
 info = get_pollutant_info(highest_pollutant)
 
 st.markdown(f"""
