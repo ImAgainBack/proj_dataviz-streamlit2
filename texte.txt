@@ -1,0 +1,26 @@
+Instructions
+Individual Student Project : Streamlit Dashboard 
+
+Mano Joseph Mathew | mano.mathew@efrei.fr 
+
+#EFREIDataStories2025 
+
+#EFREIParis #DataVisualization #Streamlit #DataStorytelling #OpenData #StudentProjects #DataVisualization  #DataViz  #DataAnalytics  #DataScience  #MachineLearning  #AI  #BigData  #DataDriven  #Python  #Streamlit  #DashboardDesign #DataStorytelling  #VisualStorytelling  #InformationDesign  #DataCommunication  #InsightDriven  #DataCulture #CareerInData  #DataProfessionals  #LinkedInLearning  #TechCommunity  #OpenData  #PublicData 
+
+Project Overview 
+Design and build a data-storytelling web app using Streamlit. Your app should load a real, public dataset, clean and analyze it, and present an interactive dashboard that guides users through a clear narrative (problem → analysis → insights → implications). The focus is on storytelling: each chart, metric, and interaction should support the narrative and answer specific user questions. 
+
+Approved data portals (choose one dataset or a small, coherent bundle from one source): - French open data:  
+
+https://www.data.gouv.fr/datasets 
+
+https://gd4h.ecologie.gouv.fr/en/catalogue 
+
+https://data.europa.eu/data/combined?locale=en 
+
+Tip: Prefer datasets with reasonable size, a clear domain question
+Learning Objectives 
+By the end of the project, you should be able to: - Frame a data question and turn it into a story arc with audiences and takeaways. - Ingest, clean, and validate open data; document assumptions and caveats. - Build an interactive dashboard in Streamlit with clear UX and performance best practices. - Apply EDA and light analytics (group-bys, joins, aggregations, simple models where relevant). - Communicate insights visually using appropriate charts, maps, and annotations. - Package and ship a reproducible app with a README. 
+
+Deliverables 
+Streamlit app (deployable) with a coherent narrative and interactive components. 
