@@ -112,35 +112,86 @@ def get_color_for_value(value, pollutant):
         return "red"
 
 
-def create_map(df_filtered, dark_mode=False):
+def get_quality_badge(value, pollutant):
+    thresholds = POLLUTANT_THRESHOLDS.get(pollutant, {"good": 25, "moderate": 50})
+    if value < thresholds["good"]:
+        return '<span style="background-color: #28a745; color: white; padding: 2px 6px; border-radius: 3px;">🟢 Bon</span>'
+    elif value < thresholds["moderate"]:
+        return '<span style="background-color: #ffc107; color: black; padding: 2px 6px; border-radius: 3px;">🟠 Modéré</span>'
+    else:
+        return '<span style="background-color: #dc3545; color: white; padding: 2px 6px; border-radius: 3px;">🔴 Élevé</span>'
+
+
+def create_map(df_filtered, dark_mode=False, selected_pollutants=None):
     center_lat = df_filtered["Latitude"].mean()
     center_lon = df_filtered["Longitude"].mean()
     
     tiles = "CartoDB dark_matter" if dark_mode else "CartoDB positron"
     m = folium.Map(location=[center_lat, center_lon], zoom_start=6, tiles=tiles)
     
-    for _, row in df_filtered.iterrows():
-        value = row["Value"]
-        pollutant = row["Pollutant"]
-        info = get_pollutant_info(pollutant)
+    if selected_pollutants is None:
+        selected_pollutants = df_filtered["Pollutant"].unique().tolist()
+    
+    location_data = df_filtered.groupby(["Latitude", "Longitude", "City", "Location"]).agg({
+        "Value": list,
+        "Pollutant": list,
+        "Last Updated": "max"
+    }).reset_index()
+    
+    for _, row in location_data.iterrows():
+        city = row["City"]
+        location = row["Location"]
+        values = row["Value"]
+        pollutants = row["Pollutant"]
+        last_updated = row["Last Updated"]
+        date_str = last_updated.strftime('%Y-%m-%d %H:%M') if pd.notna(last_updated) else 'N/A'
         
-        color = get_color_for_value(value, pollutant)
+        pollutant_rows = ""
+        avg_value = 0
+        main_pollutant = None
+        max_value = 0
         
-        popup_text = f"""
-        <b>{row['City']}</b><br>
-        📍 {row['Location']}<br>
-        🔬 {pollutant}: {value:.1f} µg/m³<br>
-        📅 {row['Last Updated'].strftime('%Y-%m-%d %H:%M') if pd.notna(row['Last Updated']) else 'N/A'}
+        for i, (poll, val) in enumerate(zip(pollutants, values)):
+            quality_badge = get_quality_badge(val, poll)
+            pollutant_rows += f"<tr><td>{poll}</td><td><b>{val:.1f} µg/m³</b></td><td>{quality_badge}</td></tr>"
+            avg_value += val
+            if val > max_value:
+                max_value = val
+                main_pollutant = poll
+        
+        avg_value = avg_value / len(values) if len(values) > 0 else 0
+        
+        if len(selected_pollutants) == 1 and main_pollutant:
+            color = get_color_for_value(max_value, main_pollutant)
+        else:
+            color = get_color_for_value(avg_value, main_pollutant if main_pollutant else "PM2.5")
+        
+        popup_html = f"""
+        <div style="font-family: Arial; font-size: 12px; min-width: 250px;">
+            <b style="font-size: 14px;">{city}</b><br>
+            <span style="color: #666;">{location}</span>
+            <hr style="margin: 5px 0;">
+            <table style="width: 100%; border-collapse: collapse;">
+                <tr style="background-color: #f8f9fa;">
+                    <th style="text-align: left; padding: 4px;">Polluant</th>
+                    <th style="text-align: left; padding: 4px;">Valeur</th>
+                    <th style="text-align: left; padding: 4px;">Qualité</th>
+                </tr>
+                {pollutant_rows}
+            </table>
+            <hr style="margin: 5px 0;">
+            <small style="color: #666;">📅 {date_str}</small>
+        </div>
         """
         
         folium.CircleMarker(
             location=[row["Latitude"], row["Longitude"]],
-            radius=6 + (value / 20),
+            radius=6 + (avg_value / 20),
             color=color,
             fill=True,
             fill_color=color,
             fill_opacity=0.7,
-            popup=folium.Popup(popup_text, max_width=300)
+            popup=folium.Popup(popup_html, max_width=350)
         ).add_to(m)
     
     return m
@@ -265,7 +316,7 @@ if date_range and len(date_range) == 2:
 
 st.markdown("""
 <div style="text-align: center; padding: 2rem 0;">
-    <h1 style="font-size: 2.8rem; margin-bottom: 0.5rem;">🌬️ L'Air que Nous Respirons Nous Tue-t-il ?</h1>
+    <h1 style="font-size: 2.8rem; margin-bottom: 0.5rem;">🌬️ L'air que nous respirons nous tue-t-il ?</h1>
     <p style="font-size: 1.3rem; color: #6c757d;">Une exploration des données de pollution atmosphérique en France</p>
 </div>
 """, unsafe_allow_html=True)
@@ -273,7 +324,7 @@ st.markdown("""
 st.markdown("---")
 
 st.markdown("""
-## 📖 Chapitre 1 : Le Problème
+## 📖 Le problème
 
 ### Pourquoi la qualité de l'air est un enjeu majeur en France ?
 """)
@@ -318,7 +369,7 @@ Explorons maintenant la répartition géographique de ces mesures...*
 st.markdown("---")
 
 st.markdown("""
-## 🔍 Chapitre 2 : Exploration des Données
+## 🔍 Exploration des données
 
 ### Cartographie de la pollution en France
 """)
@@ -355,7 +406,7 @@ if len(df_filtered) > 0:
     if len(map_data) > 500:
         map_data = map_data.sample(500, random_state=42)
     
-    m = create_map(map_data, dark_mode)
+    m = create_map(map_data, dark_mode, selected_pollutants)
     st_folium(m, width=None, height=500)
 else:
     st.warning("Aucune donnée à afficher avec les filtres sélectionnés.")
@@ -368,7 +419,7 @@ Mais que nous disent réellement ces données ? Passons à l'analyse des tendanc
 st.markdown("---")
 
 st.markdown("""
-## 📊 Chapitre 3 : Que Révèlent les Données ?
+## 📊 Que révèlent les données ?
 
 ### Les tendances et patterns cachés
 """)
@@ -385,12 +436,12 @@ city_avg = df_filtered.groupby("City_Normalized")["Value"].mean().sort_values(as
 col1, col2 = st.columns(2)
 
 with col1:
-    st.markdown("#### 🔴 Top 5 - Plus polluées")
+    st.markdown("#### 🔴 Top 5 - plus polluées")
     for i, (city, value) in enumerate(city_avg.head(5).items(), 1):
         st.markdown(f"{i}. **{city}** - {value:.1f} µg/m³")
 
 with col2:
-    st.markdown("#### 🟢 Top 5 - Moins polluées")
+    st.markdown("#### 🟢 Top 5 - moins polluées")
     least_polluted = city_avg.tail(5).sort_values(ascending=True)
     for i, (city, value) in enumerate(least_polluted.items(), 1):
         st.markdown(f"{i}. **{city}** - {value:.1f} µg/m³")
@@ -413,7 +464,7 @@ with col1:
         x="Value",
         y="City_Normalized",
         orientation="h",
-        title="Top 15 Villes - Concentration Moyenne",
+        title="Top 15 villes - concentration moyenne",
         labels={"Value": "Concentration (µg/m³)", "City_Normalized": "Ville"},
         color="Value",
         color_continuous_scale="RdYlGn_r",
@@ -432,7 +483,7 @@ with col2:
         x="Pollutant",
         y="City_Normalized",
         z="Value",
-        title="Heatmap: Villes vs Polluants",
+        title="Heatmap : villes vs polluants",
         labels={"Value": "Concentration", "Pollutant": "Polluant", "City_Normalized": "Ville"},
         color_continuous_scale="YlOrRd",
         template=template
@@ -471,7 +522,7 @@ if len(compare_cities) >= 2:
             ))
         fig_radar.update_layout(
             polar=dict(radialaxis=dict(visible=True)),
-            title="Comparaison Radar des Polluants",
+            title="Comparaison radar des polluants",
             showlegend=True,
             template=template
         )
@@ -507,7 +558,7 @@ with col1:
     fig_pie = px.pie(
         df_filtered,
         names="Pollutant",
-        title="Répartition des Mesures par Polluant",
+        title="Répartition des mesures par polluant",
         color="Pollutant",
         color_discrete_map={p: get_pollutant_info(p)["color"] for p in all_pollutants},
         template=template
@@ -520,7 +571,7 @@ with col2:
         df_filtered,
         x="Pollutant",
         y="Value",
-        title="Distribution des Concentrations par Polluant",
+        title="Distribution des concentrations par polluant",
         labels={"Value": "Concentration (µg/m³)", "Pollutant": "Polluant"},
         color="Pollutant",
         color_discrete_map={p: get_pollutant_info(p)["color"] for p in all_pollutants},
@@ -553,7 +604,7 @@ with col1:
         x="Date",
         y="Value",
         color="Pollutant",
-        title="Évolution Mensuelle des Polluants",
+        title="Évolution mensuelle des polluants",
         labels={"Value": "Concentration (µg/m³)", "Date": "Date", "Pollutant": "Polluant"},
         color_discrete_map={p: get_pollutant_info(p)["color"] for p in all_pollutants},
         template=template
@@ -572,7 +623,7 @@ with col2:
         x="Year",
         y="Value",
         color="Pollutant",
-        title="Concentration Moyenne Annuelle",
+        title="Concentration moyenne annuelle",
         labels={"Value": "Concentration (µg/m³)", "Year": "Année", "Pollutant": "Polluant"},
         barmode="group",
         color_discrete_map={p: get_pollutant_info(p)["color"] for p in all_pollutants},
@@ -590,7 +641,177 @@ l'ozone augmente en été (réaction photochimique), tandis que les particules f
 st.markdown("---")
 
 st.markdown("""
-## 💡 Chapitre 4 : Implications et Recommandations
+## 🏙️ Vue d'ensemble des grandes métropoles
+
+Comparaison des niveaux de pollution dans les principales métropoles françaises.
+""")
+
+MAJOR_CITIES = ["PARIS", "LYON", "MARSEILLE", "TOULOUSE", "NICE", "NANTES", "STRASBOURG", "MONTPELLIER", "BORDEAUX", "LILLE"]
+
+df_metro = df_filtered[df_filtered["City_Normalized"].isin(MAJOR_CITIES)]
+
+if len(df_metro) > 0:
+    metro_pollutant_avg = df_metro.groupby(["City_Normalized", "Pollutant"])["Value"].mean().reset_index()
+    
+    fig_metro = px.bar(
+        metro_pollutant_avg,
+        x="Value",
+        y="City_Normalized",
+        color="Pollutant",
+        orientation="h",
+        title="Niveaux moyens de pollution par métropole",
+        labels={"Value": "Concentration (µg/m³)", "City_Normalized": "Ville", "Pollutant": "Polluant"},
+        barmode="group",
+        color_discrete_map={p: get_pollutant_info(p)["color"] for p in all_pollutants},
+        template=template
+    )
+    fig_metro.update_layout(
+        yaxis={'categoryorder': 'total ascending'},
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+    )
+    st.plotly_chart(fig_metro, use_container_width=True)
+else:
+    st.info("Aucune donnée disponible pour les grandes métropoles avec les filtres actuels.")
+
+st.markdown("---")
+
+st.markdown("""
+## ⚠️ Villes touchées par les polluants à impact élevé
+
+Focus sur les polluants les plus dangereux : PM2.5, PM10 et NO2.
+""")
+
+HIGH_IMPACT_POLLUTANTS = ["PM2.5", "PM10", "NO2"]
+df_high_impact = df_filtered[df_filtered["Pollutant"].isin(HIGH_IMPACT_POLLUTANTS)]
+
+if len(df_high_impact) > 0:
+    city_high_impact = df_high_impact.groupby(["City_Normalized", "Pollutant"])["Value"].mean().reset_index()
+    city_high_impact = city_high_impact.sort_values("Value", ascending=False).head(20)
+    
+    def get_risk_level(value, pollutant):
+        thresholds = POLLUTANT_THRESHOLDS.get(pollutant, {"good": 25, "moderate": 50})
+        if value < thresholds["good"]:
+            return "🟢 Faible"
+        elif value < thresholds["moderate"]:
+            return "🟠 Modéré"
+        else:
+            return "🔴 Élevé"
+    
+    def get_health_recommendation(value, pollutant):
+        thresholds = POLLUTANT_THRESHOLDS.get(pollutant, {"good": 25, "moderate": 50})
+        if value < thresholds["good"]:
+            return "Activités normales"
+        elif value < thresholds["moderate"]:
+            return "Limiter les efforts prolongés"
+        else:
+            return "Éviter les activités en extérieur"
+    
+    city_high_impact["Niveau de risque"] = city_high_impact.apply(
+        lambda row: get_risk_level(row["Value"], row["Pollutant"]), axis=1
+    )
+    city_high_impact["Recommandation"] = city_high_impact.apply(
+        lambda row: get_health_recommendation(row["Value"], row["Pollutant"]), axis=1
+    )
+    
+    display_df = city_high_impact.rename(columns={
+        "City_Normalized": "Ville",
+        "Pollutant": "Polluant",
+        "Value": "Valeur moyenne (µg/m³)"
+    })
+    display_df["Valeur moyenne (µg/m³)"] = display_df["Valeur moyenne (µg/m³)"].round(1)
+    
+    st.dataframe(
+        display_df[["Ville", "Polluant", "Valeur moyenne (µg/m³)", "Niveau de risque", "Recommandation"]],
+        use_container_width=True,
+        hide_index=True
+    )
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        fig_high_impact = px.bar(
+            city_high_impact.head(10),
+            x="Value",
+            y="City_Normalized",
+            color="Pollutant",
+            orientation="h",
+            title="Top 10 villes - polluants à impact élevé",
+            labels={"Value": "Concentration (µg/m³)", "City_Normalized": "Ville", "Pollutant": "Polluant"},
+            color_discrete_map={p: get_pollutant_info(p)["color"] for p in HIGH_IMPACT_POLLUTANTS},
+            template=template
+        )
+        fig_high_impact.update_layout(yaxis={'categoryorder': 'total ascending'})
+        st.plotly_chart(fig_high_impact, use_container_width=True)
+    
+    with col2:
+        high_impact_by_pollutant = df_high_impact.groupby("Pollutant")["Value"].mean().reset_index()
+        fig_pie_impact = px.pie(
+            high_impact_by_pollutant,
+            values="Value",
+            names="Pollutant",
+            title="Répartition des niveaux moyens par polluant",
+            color="Pollutant",
+            color_discrete_map={p: get_pollutant_info(p)["color"] for p in HIGH_IMPACT_POLLUTANTS},
+            template=template
+        )
+        st.plotly_chart(fig_pie_impact, use_container_width=True)
+else:
+    st.info("Aucune donnée disponible pour les polluants à impact élevé avec les filtres actuels.")
+
+st.markdown("---")
+
+st.markdown("""
+## ⚠️ Recommandations santé
+
+### Quand éviter le sport en extérieur ?
+- **PM2.5 > 25 µg/m³** : Limitez les efforts physiques prolongés
+- **PM10 > 50 µg/m³** : Évitez le jogging et le vélo
+- **NO2 > 40 µg/m³** : Restez à l'intérieur si possible
+- **O3 > 100 µg/m³** (été) : Pas d'activité sportive entre 12h et 16h
+
+### Conseils au quotidien
+- Consultez régulièrement les indices de qualité de l'air de votre ville
+- Limitez les activités physiques extérieures lors des pics de pollution
+- Privilégiez les déplacements à pied, vélo ou transports en commun
+- Aérez votre logement aux heures de moindre trafic (tôt le matin ou tard le soir)
+""")
+
+if len(df_filtered) > 0:
+    alerts = []
+    
+    for pollutant in ["PM2.5", "PM10", "NO2", "O3"]:
+        df_poll = df_filtered[df_filtered["Pollutant"] == pollutant]
+        if len(df_poll) > 0:
+            avg_value = df_poll["Value"].mean()
+            thresholds = POLLUTANT_THRESHOLDS.get(pollutant, {"good": 25, "moderate": 50})
+            
+            if avg_value > thresholds["moderate"]:
+                if selected_cities:
+                    city_name = ", ".join(selected_cities[:3])
+                    if len(selected_cities) > 3:
+                        city_name += "..."
+                else:
+                    city_name = "les zones sélectionnées"
+                
+                if pollutant == "PM2.5":
+                    recommendation = "Évitez les activités sportives en extérieur."
+                elif pollutant == "PM10":
+                    recommendation = "Limitez le jogging et le vélo en extérieur."
+                elif pollutant == "NO2":
+                    recommendation = "Restez à l'intérieur si possible."
+                else:
+                    recommendation = "Évitez les efforts physiques entre 12h et 16h."
+                
+                alerts.append(f"⚠️ **Attention** : les niveaux de {pollutant} dans {city_name} sont actuellement élevés ({avg_value:.1f} µg/m³). {recommendation}")
+    
+    if alerts:
+        st.markdown("### 🚨 Alertes basées sur vos filtres")
+        for alert in alerts:
+            st.warning(alert)
+
+st.markdown("---")
+
+st.markdown("""
+## 💡 Implications et recommandations
 
 ### Que faire face à ces constats ?
 """)
