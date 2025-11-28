@@ -50,6 +50,12 @@ POLLUTANT_THRESHOLDS = {
     "NO": {"good": 25, "moderate": 50}
 }
 
+MAJOR_CITIES = ["PARIS", "LYON", "MARSEILLE", "TOULOUSE", "NICE", "NANTES", "STRASBOURG", "MONTPELLIER", "BORDEAUX", "LILLE"]
+
+HIGH_IMPACT_POLLUTANTS = ["PM2.5", "PM10", "NO2"]
+
+MAX_CITIES_IN_ALERT = 3
+
 
 @st.cache_data
 def load_data():
@@ -151,7 +157,7 @@ def create_map(df_filtered, dark_mode=False, selected_pollutants=None):
         main_pollutant = None
         max_value = 0
         
-        for i, (poll, val) in enumerate(zip(pollutants, values)):
+        for poll, val in zip(pollutants, values):
             quality_badge = get_quality_badge(val, poll)
             pollutant_rows += f"<tr><td>{poll}</td><td><b>{val:.1f} µg/m³</b></td><td>{quality_badge}</td></tr>"
             avg_value += val
@@ -159,12 +165,12 @@ def create_map(df_filtered, dark_mode=False, selected_pollutants=None):
                 max_value = val
                 main_pollutant = poll
         
-        avg_value = avg_value / len(values) if len(values) > 0 else 0
+        avg_value = avg_value / len(values)
         
         if len(selected_pollutants) == 1 and main_pollutant:
             color = get_color_for_value(max_value, main_pollutant)
         else:
-            color = get_color_for_value(avg_value, main_pollutant if main_pollutant else "PM2.5")
+            color = get_color_for_value(avg_value, main_pollutant) if main_pollutant else "orange"
         
         popup_html = f"""
         <div style="font-family: Arial; font-size: 12px; min-width: 250px;">
@@ -646,8 +652,6 @@ st.markdown("""
 Comparaison des niveaux de pollution dans les principales métropoles françaises.
 """)
 
-MAJOR_CITIES = ["PARIS", "LYON", "MARSEILLE", "TOULOUSE", "NICE", "NANTES", "STRASBOURG", "MONTPELLIER", "BORDEAUX", "LILLE"]
-
 df_metro = df_filtered[df_filtered["City_Normalized"].isin(MAJOR_CITIES)]
 
 if len(df_metro) > 0:
@@ -681,7 +685,6 @@ st.markdown("""
 Focus sur les polluants les plus dangereux : PM2.5, PM10 et NO2.
 """)
 
-HIGH_IMPACT_POLLUTANTS = ["PM2.5", "PM10", "NO2"]
 df_high_impact = df_filtered[df_filtered["Pollutant"].isin(HIGH_IMPACT_POLLUTANTS)]
 
 if len(df_high_impact) > 0:
@@ -786,8 +789,8 @@ if len(df_filtered) > 0:
             
             if avg_value > thresholds["moderate"]:
                 if selected_cities:
-                    city_name = ", ".join(selected_cities[:3])
-                    if len(selected_cities) > 3:
+                    city_name = ", ".join(selected_cities[:MAX_CITIES_IN_ALERT])
+                    if len(selected_cities) > MAX_CITIES_IN_ALERT:
                         city_name += "..."
                 else:
                     city_name = "les zones sélectionnées"
