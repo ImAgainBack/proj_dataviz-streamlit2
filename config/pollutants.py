@@ -1,6 +1,12 @@
 # Configuration centralisée pour les polluants et seuils OMS
 # Module externalisé pour faciliter la maintenance
 
+# Constantes de configuration
+MAX_NORMALIZED_SCORE = 150  # Score maximum pour la normalisation
+INDEX_MODERATE_THRESHOLD = 50  # Seuil pour catégorie "Modéré"
+INDEX_HIGH_THRESHOLD = 100  # Seuil pour catégorie "Élevé"
+SENSITIVE_POPULATION_FACTOR = 0.7  # Facteur de réduction des seuils pour populations sensibles
+
 POLLUTANT_THRESHOLDS = {
     "PM2.5": {"good": 15, "moderate": 25, "weight": 1.5},
     "PM10": {"good": 45, "moderate": 75, "weight": 1.2},
@@ -85,7 +91,7 @@ def calculate_pollution_index(values_by_pollutant):
             moderate = thresholds["moderate"]
             
             # Normalise la valeur par rapport au seuil modéré (100 = seuil modéré)
-            normalized_score = min((value / moderate) * 100, 150)
+            normalized_score = min((value / moderate) * 100, MAX_NORMALIZED_SCORE)
             
             total_weighted_score += normalized_score * weight
             total_weight += weight
@@ -98,9 +104,9 @@ def calculate_pollution_index(values_by_pollutant):
 
 def get_index_category(index_value):
     """Catégorise l'indice de pollution"""
-    if index_value < 50:
+    if index_value < INDEX_MODERATE_THRESHOLD:
         return {"label": "Bon", "color": COLOR_PALETTE["good"], "emoji": "🟢"}
-    elif index_value < 100:
+    elif index_value < INDEX_HIGH_THRESHOLD:
         return {"label": "Modéré", "color": COLOR_PALETTE["moderate"], "emoji": "🟠"}
     else:
         return {"label": "Élevé", "color": COLOR_PALETTE["bad"], "emoji": "🔴"}

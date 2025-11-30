@@ -11,8 +11,13 @@ from datetime import datetime
 from config.pollutants import (
     POLLUTANT_THRESHOLDS, POLLUTANT_INFO, MAJOR_CITIES, HIGH_IMPACT_POLLUTANTS,
     GUIDING_QUESTIONS, COLOR_PALETTE, get_pollutant_info, get_color_discrete_map,
-    calculate_pollution_index, get_index_category
+    calculate_pollution_index, get_index_category, SENSITIVE_POPULATION_FACTOR,
+    INDEX_MODERATE_THRESHOLD, INDEX_HIGH_THRESHOLD
 )
+
+# Constantes de configuration de l'application
+RECENT_DATA_YEARS_BACK = 1  # Nombre d'années pour considérer les données comme récentes
+MIN_DATA_WARNING_THRESHOLD = 100  # Seuil pour afficher un avertissement de données limitées
 
 st.set_page_config(
     page_title="Qualité de l'Air en France - L'air que nous respirons nous tue-t-il ?",
@@ -87,7 +92,7 @@ def load_data():
     
     # Ajouter une colonne pour distinguer données récentes vs historiques
     current_year = datetime.now().year
-    df["Is_Recent"] = df["Year"] >= (current_year - 1)  # Données de l'année en cours et précédente
+    df["Is_Recent"] = df["Year"] >= (current_year - RECENT_DATA_YEARS_BACK)
     df["Data_Age"] = current_year - df["Year"]
     
     return df
@@ -444,7 +449,7 @@ if date_range and len(date_range) == 2:
 
 # Afficher un avertissement si les données sont limitées
 n_filtered = len(df_filtered)
-if n_filtered < 100 and n_filtered > 0:
+if n_filtered < MIN_DATA_WARNING_THRESHOLD and n_filtered > 0:
     st.sidebar.warning(f"⚠️ Données limitées ({n_filtered} mesures)")
 elif n_filtered == 0:
     st.sidebar.error("❌ Aucune donnée avec ces filtres")
@@ -876,12 +881,9 @@ if len(df_high_impact) > 0:
     def get_risk_level(value, pollutant, sensitive=False):
         thresholds = POLLUTANT_THRESHOLDS.get(pollutant, {"good": 25, "moderate": 50})
         # Seuils plus stricts pour populations sensibles
-        if sensitive:
-            good_threshold = thresholds["good"] * 0.7
-            moderate_threshold = thresholds["moderate"] * 0.7
-        else:
-            good_threshold = thresholds["good"]
-            moderate_threshold = thresholds["moderate"]
+        factor = SENSITIVE_POPULATION_FACTOR if sensitive else 1.0
+        good_threshold = thresholds["good"] * factor
+        moderate_threshold = thresholds["moderate"] * factor
         
         if value < good_threshold:
             return "🟢 Faible"
@@ -892,12 +894,9 @@ if len(df_high_impact) > 0:
     
     def get_health_recommendation(value, pollutant, sensitive=False):
         thresholds = POLLUTANT_THRESHOLDS.get(pollutant, {"good": 25, "moderate": 50})
-        if sensitive:
-            good_threshold = thresholds["good"] * 0.7
-            moderate_threshold = thresholds["moderate"] * 0.7
-        else:
-            good_threshold = thresholds["good"]
-            moderate_threshold = thresholds["moderate"]
+        factor = SENSITIVE_POPULATION_FACTOR if sensitive else 1.0
+        good_threshold = thresholds["good"] * factor
+        moderate_threshold = thresholds["moderate"] * factor
         
         if value < good_threshold:
             return "Activités normales" if not sensitive else "Activités normales avec surveillance"
@@ -938,7 +937,8 @@ if len(df_filtered) > 0:
         if len(df_poll) > 0:
             avg_value = df_poll["Value"].mean()
             thresholds = POLLUTANT_THRESHOLDS.get(pollutant, {"good": 25, "moderate": 50})
-            threshold = thresholds["moderate"] * (0.7 if sensitive_population else 1.0)
+            factor = SENSITIVE_POPULATION_FACTOR if sensitive_population else 1.0
+            threshold = thresholds["moderate"] * factor
             
             if avg_value > threshold:
                 if selected_cities:
