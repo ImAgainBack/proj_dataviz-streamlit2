@@ -459,6 +459,9 @@ st.markdown("""
 <div style="text-align: center; padding: 2rem 0;">
     <h1 style="font-size: 2.8rem; margin-bottom: 0.5rem;">🌬️ L'air que nous respirons nous tue-t-il ?</h1>
     <p style="font-size: 1.3rem; color: #6c757d;">Une exploration des données de pollution atmosphérique en France</p>
+    <p style="font-size: 0.95rem; color: #888; margin-top: 0.5rem;">
+        <strong>🎯 Public cible :</strong> Citoyens, décideurs politiques et chercheurs
+    </p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -528,6 +531,82 @@ with st.expander("📚 Comprendre les polluants en détail", expanded=False):
     - **Prévalence** : Marqueur du trafic routier
     - **Seuil OMS** : 25 µg/m³
     """)
+
+# Data Dictionary expander
+with st.expander("📖 Dictionnaire des données", expanded=False):
+    st.markdown("""
+    | Colonne | Description | Type | Unité |
+    |---------|-------------|------|-------|
+    | `Pollutant` | Type de polluant mesuré | Catégorie | - |
+    | `Value` | Concentration mesurée | Numérique | µg/m³ |
+    | `City` | Ville de la station | Texte | - |
+    | `Location` | Nom de la station | Texte | - |
+    | `Coordinates` | Position GPS | Texte | lat, lon |
+    | `Last Updated` | Date/heure de mesure | Datetime | UTC |
+    | `Country` | Pays (France) | Texte | - |
+    
+    **Sources** : European Environment Agency (EEA) - OpenData Qualité de l'Air
+    
+    **Licence** : Open Data - Réutilisation libre avec attribution
+    """)
+
+# Data Quality Section
+with st.expander("🔍 Qualité des données", expanded=False):
+    st.markdown("### Validation et nettoyage des données")
+    
+    # Calculate data quality metrics
+    df_raw_stats = pd.read_csv("qualite-de-lair-france.csv", sep=";")
+    total_rows_raw = len(df_raw_stats)
+    total_rows_clean = len(df)
+    rows_removed = total_rows_raw - total_rows_clean
+    
+    col_q1, col_q2, col_q3 = st.columns(3)
+    with col_q1:
+        st.metric("📊 Lignes brutes", f"{total_rows_raw:,}")
+    with col_q2:
+        st.metric("✅ Lignes validées", f"{total_rows_clean:,}")
+    with col_q3:
+        st.metric("🗑️ Lignes filtrées", f"{rows_removed:,}", delta=f"-{rows_removed/total_rows_raw*100:.1f}%")
+    
+    st.markdown("#### Contrôles de qualité appliqués")
+    
+    # Missingness check
+    missing_coords = df_raw_stats["Coordinates"].isna().sum()
+    missing_value = df_raw_stats["Value"].isna().sum() if "Value" in df_raw_stats.columns else 0
+    
+    quality_checks = pd.DataFrame({
+        "Contrôle": [
+            "Coordonnées manquantes",
+            "Valeurs manquantes", 
+            "Valeurs aberrantes (< 0 ou > 1000)",
+            "Villes invalides (codes)",
+            "Polluants non-atmosphériques"
+        ],
+        "Statut": ["✅ Filtrées", "✅ Filtrées", "✅ Filtrées", "✅ Filtrées", "✅ Filtrées"],
+        "Impact": [
+            f"{missing_coords:,} lignes",
+            f"{missing_value:,} lignes",
+            "Variable",
+            "Variable", 
+            "Variable"
+        ]
+    })
+    st.dataframe(quality_checks, hide_index=True, use_container_width=True)
+    
+    # Duplicates check
+    duplicates = df.duplicated(subset=["City", "Location", "Pollutant", "Last Updated"]).sum()
+    st.markdown(f"**Doublons détectés** : {duplicates} (conservés pour analyse temporelle)")
+    
+    st.markdown("""
+    <div class="insight-box">
+    <strong>⚠️ Limitations connues</strong> :
+    <ul>
+        <li>Mesures ponctuelles (horaires) - non représentatives des moyennes annuelles</li>
+        <li>Couverture géographique inégale (plus dense en zones urbaines)</li>
+        <li>Certaines stations peuvent avoir des interruptions de service</li>
+    </ul>
+    </div>
+    """, unsafe_allow_html=True)
 
 # Questions directrices
 st.markdown('<a id="synthese"></a>', unsafe_allow_html=True)
@@ -1013,6 +1092,87 @@ if len(df_filtered) > 0:
         st.markdown("### 🚨 Alertes actives")
         for alert in alerts:
             st.warning(alert)
+
+st.markdown("---")
+
+# What-If Scenario Section
+st.markdown("## 🔮 Simulation What-If : Impact d'une réduction des émissions")
+
+st.markdown("""
+<div class="insight-box">
+<strong>💡 Hypothèse</strong> : Cette simulation montre l'impact potentiel d'une réduction des émissions 
+de polluants sur la qualité de l'air. Les valeurs sont calculées de manière linéaire à partir des données actuelles.
+</div>
+""", unsafe_allow_html=True)
+
+col_whatif1, col_whatif2 = st.columns([1, 2])
+
+with col_whatif1:
+    reduction_percent = st.slider(
+        "🎚️ Réduction des émissions (%)",
+        min_value=0,
+        max_value=50,
+        value=20,
+        step=5,
+        help="Simulez l'impact d'une réduction des émissions de polluants"
+    )
+    
+    whatif_pollutant = st.selectbox(
+        "Polluant à simuler",
+        options=selected_pollutants if selected_pollutants else ["NO2", "PM2.5", "PM10"],
+        index=0
+    )
+
+with col_whatif2:
+    if len(df_filtered) > 0 and whatif_pollutant:
+        df_poll_whatif = df_filtered[df_filtered["Pollutant"] == whatif_pollutant]
+        if len(df_poll_whatif) > 0:
+            current_avg = df_poll_whatif["Value"].mean()
+            simulated_avg = current_avg * (1 - reduction_percent / 100)
+            thresholds = POLLUTANT_THRESHOLDS.get(whatif_pollutant, {"good": 25, "moderate": 50})
+            
+            # Determine status change
+            def get_status(val, thresh):
+                if val < thresh["good"]:
+                    return "🟢 Bon"
+                elif val < thresh["moderate"]:
+                    return "🟠 Modéré"
+                else:
+                    return "🔴 Élevé"
+            
+            current_status = get_status(current_avg, thresholds)
+            simulated_status = get_status(simulated_avg, thresholds)
+            
+            col_s1, col_s2, col_s3 = st.columns(3)
+            with col_s1:
+                st.metric(
+                    f"📊 {whatif_pollutant} actuel",
+                    f"{current_avg:.1f} µg/m³",
+                    delta=None
+                )
+                st.caption(current_status)
+            with col_s2:
+                st.metric(
+                    f"🎯 {whatif_pollutant} simulé",
+                    f"{simulated_avg:.1f} µg/m³",
+                    delta=f"-{current_avg - simulated_avg:.1f}"
+                )
+                st.caption(simulated_status)
+            with col_s3:
+                st.metric(
+                    "📉 Seuil OMS",
+                    f"{thresholds['good']} µg/m³",
+                    delta=f"{simulated_avg - thresholds['good']:.1f}" if simulated_avg > thresholds['good'] else "✅ Conforme"
+                )
+            
+            # Progress bar showing progress toward OMS threshold
+            if current_avg > thresholds['good']:
+                progress_to_goal = min(1.0, max(0.0, (current_avg - simulated_avg) / (current_avg - thresholds['good'])))
+                st.progress(progress_to_goal, text=f"Progression vers le seuil OMS : {progress_to_goal*100:.0f}%")
+        else:
+            st.info(f"Aucune donnée disponible pour {whatif_pollutant}")
+    else:
+        st.info("Sélectionnez des polluants pour voir la simulation")
 
 st.markdown("---")
 
