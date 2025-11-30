@@ -7,6 +7,13 @@ import folium
 from streamlit_folium import st_folium
 from datetime import datetime
 
+# Import configuration centralisée
+from config.pollutants import (
+    POLLUTANT_THRESHOLDS, POLLUTANT_INFO, MAJOR_CITIES, HIGH_IMPACT_POLLUTANTS,
+    GUIDING_QUESTIONS, COLOR_PALETTE, get_pollutant_info, get_color_discrete_map,
+    calculate_pollution_index, get_index_category
+)
+
 st.set_page_config(
     page_title="Qualité de l'Air en France - L'air que nous respirons nous tue-t-il ?",
     page_icon="🌬️",
@@ -39,20 +46,6 @@ def is_valid_city(city):
         return False
     return True
 
-
-POLLUTANT_THRESHOLDS = {
-    "PM2.5": {"good": 15, "moderate": 25},
-    "PM10": {"good": 45, "moderate": 75},
-    "NO2": {"good": 25, "moderate": 50},
-    "O3": {"good": 100, "moderate": 180},
-    "SO2": {"good": 40, "moderate": 100},
-    "CO": {"good": 4000, "moderate": 10000},
-    "NO": {"good": 25, "moderate": 50}
-}
-
-MAJOR_CITIES = ["PARIS", "LYON", "MARSEILLE", "TOULOUSE", "NICE", "NANTES", "STRASBOURG", "MONTPELLIER", "BORDEAUX", "LILLE"]
-
-HIGH_IMPACT_POLLUTANTS = ["PM2.5", "PM10", "NO2"]
 
 MAX_CITIES_IN_ALERT = 3
 
@@ -92,20 +85,12 @@ def load_data():
     
     df["City_Normalized"] = df["City"].apply(normalize_city)
     
+    # Ajouter une colonne pour distinguer données récentes vs historiques
+    current_year = datetime.now().year
+    df["Is_Recent"] = df["Year"] >= (current_year - 1)  # Données de l'année en cours et précédente
+    df["Data_Age"] = current_year - df["Year"]
+    
     return df
-
-
-def get_pollutant_info(pollutant):
-    info = {
-        "NO2": {"name": "Dioxyde d'azote", "color": "#E74C3C", "icon": "🚗"},
-        "O3": {"name": "Ozone", "color": "#3498DB", "icon": "☀️"},
-        "PM10": {"name": "Particules PM10", "color": "#9B59B6", "icon": "🏭"},
-        "PM2.5": {"name": "Particules fines PM2.5", "color": "#E67E22", "icon": "🌫️"},
-        "SO2": {"name": "Dioxyde de soufre", "color": "#1ABC9C", "icon": "⚗️"},
-        "NO": {"name": "Monoxyde d'azote", "color": "#F39C12", "icon": "🔥"},
-        "CO": {"name": "Monoxyde de carbone", "color": "#34495E", "icon": "💨"}
-    }
-    return info.get(pollutant, {"name": pollutant, "color": "#7F8C8D", "icon": "📊"})
 
 
 def get_color_for_value(value, pollutant):
@@ -121,11 +106,21 @@ def get_color_for_value(value, pollutant):
 def get_quality_badge(value, pollutant):
     thresholds = POLLUTANT_THRESHOLDS.get(pollutant, {"good": 25, "moderate": 50})
     if value < thresholds["good"]:
-        return '<span style="background-color: #28a745; color: white; padding: 2px 6px; border-radius: 3px;">🟢 Bon</span>'
+        return '<span style="background-color: #28a745; color: white; padding: 2px 6px; border-radius: 3px; font-weight: 500;">🟢 Bon</span>'
     elif value < thresholds["moderate"]:
-        return '<span style="background-color: #ffc107; color: black; padding: 2px 6px; border-radius: 3px;">🟠 Modéré</span>'
+        return '<span style="background-color: #ffc107; color: #212529; padding: 2px 6px; border-radius: 3px; font-weight: 500;">🟠 Modéré</span>'
     else:
-        return '<span style="background-color: #dc3545; color: white; padding: 2px 6px; border-radius: 3px;">🔴 Élevé</span>'
+        return '<span style="background-color: #dc3545; color: white; padding: 2px 6px; border-radius: 3px; font-weight: 500;">🔴 Élevé</span>'
+
+
+def calculate_city_pollution_index(df, city):
+    """Calcule l'indice de pollution composite pour une ville"""
+    city_data = df[df["City_Normalized"] == city]
+    if len(city_data) == 0:
+        return 0
+    
+    values_by_pollutant = city_data.groupby("Pollutant")["Value"].mean().to_dict()
+    return calculate_pollution_index(values_by_pollutant)
 
 
 def create_map(df_filtered, dark_mode=False, selected_pollutants=None):
@@ -210,6 +205,21 @@ st.sidebar.title("🎛️ Filtres")
 
 dark_mode = st.sidebar.toggle("🌙 Mode sombre", value=False)
 
+# Nouveau: Toggle données récentes vs historiques
+data_mode = st.sidebar.radio(
+    "📅 Type de données",
+    options=["Toutes", "Récentes (2024-2025)", "Historiques (<2024)"],
+    index=0,
+    help="Sépare les données récentes des données historiques pour une analyse plus pertinente"
+)
+
+# Nouveau: Toggle métropoles uniquement
+show_metropoles_only = st.sidebar.toggle(
+    "🏙️ Métropoles uniquement",
+    value=False,
+    help="Afficher uniquement les 10 principales métropoles françaises"
+)
+
 if dark_mode:
     template = "plotly_dark"
     st.markdown("""
@@ -254,6 +264,48 @@ if dark_mode:
     .legend-box th, .legend-box td {
         color: #fafafa !important;
     }
+    .nav-box {
+        background-color: #1a1a2e;
+        padding: 0.8rem;
+        border-radius: 8px;
+        margin-bottom: 1.5rem;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        justify-content: center;
+    }
+    .nav-link {
+        background-color: #2E86AB;
+        color: white !important;
+        padding: 0.5rem 1rem;
+        border-radius: 20px;
+        text-decoration: none;
+        font-size: 0.9rem;
+        font-weight: 500;
+    }
+    .scoreboard {
+        background: linear-gradient(135deg, #2E86AB 0%, #1a5a7a 100%);
+        padding: 1.5rem;
+        border-radius: 12px;
+        color: white;
+        margin-bottom: 1.5rem;
+    }
+    .methodology-banner {
+        background-color: #3d3d00;
+        border: 1px solid #ffc107;
+        padding: 0.8rem 1rem;
+        border-radius: 8px;
+        margin-bottom: 1rem;
+        font-size: 0.9rem;
+        color: #fafafa;
+    }
+    .question-card {
+        background-color: #1a1a2e;
+        border-radius: 8px;
+        padding: 1rem;
+        text-align: center;
+        height: 100%;
+    }
     </style>
     """, unsafe_allow_html=True)
 else:
@@ -280,6 +332,52 @@ else:
         border-radius: 8px;
         margin-bottom: 1rem;
     }
+    .nav-box {
+        background-color: #f8f9fa;
+        padding: 0.8rem;
+        border-radius: 8px;
+        margin-bottom: 1.5rem;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+        justify-content: center;
+    }
+    .nav-link {
+        background-color: #2E86AB;
+        color: white !important;
+        padding: 0.5rem 1rem;
+        border-radius: 20px;
+        text-decoration: none;
+        font-size: 0.9rem;
+        font-weight: 500;
+        transition: all 0.2s;
+    }
+    .nav-link:hover {
+        background-color: #1a5a7a;
+        transform: translateY(-2px);
+    }
+    .scoreboard {
+        background: linear-gradient(135deg, #2E86AB 0%, #1a5a7a 100%);
+        padding: 1.5rem;
+        border-radius: 12px;
+        color: white;
+        margin-bottom: 1.5rem;
+    }
+    .methodology-banner {
+        background-color: #fff3cd;
+        border: 1px solid #ffc107;
+        padding: 0.8rem 1rem;
+        border-radius: 8px;
+        margin-bottom: 1rem;
+        font-size: 0.9rem;
+    }
+    .question-card {
+        background-color: #e8f4f8;
+        border-radius: 8px;
+        padding: 1rem;
+        text-align: center;
+        height: 100%;
+    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -287,13 +385,25 @@ all_pollutants = sorted(df["Pollutant"].unique())
 selected_pollutants = st.sidebar.multiselect(
     "Polluants",
     options=all_pollutants,
-    default=["NO2", "PM10", "O3"]
+    default=["NO2", "PM10", "PM2.5"]
 )
 
-all_cities = sorted(df["City_Normalized"].dropna().unique())
+# Filtrer les villes selon le toggle métropoles
+if show_metropoles_only:
+    available_cities = [c for c in sorted(df["City_Normalized"].dropna().unique()) if c in MAJOR_CITIES]
+else:
+    available_cities = sorted(df["City_Normalized"].dropna().unique())
+
+# Nouveau: Recherche de ville avec autocomplétion
+search_city = st.sidebar.text_input("🔍 Rechercher une ville", placeholder="Tapez le nom...")
+if search_city:
+    filtered_cities = [c for c in available_cities if search_city.upper() in c.upper()]
+else:
+    filtered_cities = available_cities
+
 selected_cities = st.sidebar.multiselect(
     "Villes",
-    options=all_cities,
+    options=filtered_cities,
     default=[]
 )
 
@@ -309,7 +419,19 @@ if df["Date"].notna().any():
 else:
     date_range = None
 
+# Application des filtres
 df_filtered = df.copy()
+
+# Filtre par type de données (récentes vs historiques)
+if data_mode == "Récentes (2024-2025)":
+    df_filtered = df_filtered[df_filtered["Is_Recent"] == True]
+elif data_mode == "Historiques (<2024)":
+    df_filtered = df_filtered[df_filtered["Is_Recent"] == False]
+
+# Filtre métropoles uniquement
+if show_metropoles_only:
+    df_filtered = df_filtered[df_filtered["City_Normalized"].isin(MAJOR_CITIES)]
+
 if selected_pollutants:
     df_filtered = df_filtered[df_filtered["Pollutant"].isin(selected_pollutants)]
 if selected_cities:
@@ -320,12 +442,99 @@ if date_range and len(date_range) == 2:
         (df_filtered["Date"] <= date_range[1])
     ]
 
+# Afficher un avertissement si les données sont limitées
+n_filtered = len(df_filtered)
+if n_filtered < 100 and n_filtered > 0:
+    st.sidebar.warning(f"⚠️ Données limitées ({n_filtered} mesures)")
+elif n_filtered == 0:
+    st.sidebar.error("❌ Aucune donnée avec ces filtres")
+
 st.markdown("""
 <div style="text-align: center; padding: 2rem 0;">
     <h1 style="font-size: 2.8rem; margin-bottom: 0.5rem;">🌬️ L'air que nous respirons nous tue-t-il ?</h1>
     <p style="font-size: 1.3rem; color: #6c757d;">Une exploration des données de pollution atmosphérique en France</p>
 </div>
 """, unsafe_allow_html=True)
+
+# Navigation interne (ancres)
+st.markdown("""
+<div class="nav-box">
+    <a href="#synthese" class="nav-link">📊 Synthèse</a>
+    <a href="#carte" class="nav-link">🗺️ Carte</a>
+    <a href="#analyse" class="nav-link">📈 Analyse</a>
+    <a href="#sante" class="nav-link">❤️ Santé</a>
+    <a href="#recommandations" class="nav-link">💡 Actions</a>
+</div>
+""", unsafe_allow_html=True)
+
+# Bandeau méthodologique
+date_min_data = df["Date"].min()
+date_max_data = df["Date"].max()
+st.markdown(f"""
+<div class="methodology-banner">
+⚠️ <strong>Note méthodologique</strong> : Les mesures présentées sont ponctuelles (horaires) et ne doivent pas être interprétées 
+comme des moyennes annuelles officielles. Les seuils OMS indiqués sont des valeurs de référence annuelles ou sur 8h. 
+Données couvrant la période du <strong>{date_min_data}</strong> au <strong>{date_max_data}</strong>.
+</div>
+""", unsafe_allow_html=True)
+
+# Questions directrices
+st.markdown('<a id="synthese"></a>', unsafe_allow_html=True)
+st.markdown("## 🎯 Questions clés pour guider notre exploration")
+
+q_cols = st.columns(4)
+for i, question in enumerate(GUIDING_QUESTIONS):
+    with q_cols[i]:
+        st.markdown(f"""
+        <div class="question-card">
+            <p style="font-size: 1rem; margin: 0;">{question}</p>
+        </div>
+        """, unsafe_allow_html=True)
+
+st.markdown("")
+
+# Résumé exécutif dynamique (scoreboard)
+if len(df_filtered) > 0:
+    # Calcul des indicateurs clés
+    most_polluted_city = df_filtered.groupby("City_Normalized")["Value"].mean().idxmax()
+    most_polluted_value = df_filtered.groupby("City_Normalized")["Value"].mean().max()
+    
+    dominant_pollutant = df_filtered.groupby("Pollutant")["Value"].mean().idxmax()
+    dominant_pollutant_value = df_filtered.groupby("Pollutant")["Value"].mean().max()
+    
+    overall_avg = df_filtered["Value"].mean()
+    
+    # Calcul de l'indice composite pour la ville la plus polluée
+    city_pollution_index = calculate_city_pollution_index(df_filtered, most_polluted_city)
+    index_category = get_index_category(city_pollution_index)
+    
+    st.markdown(f"""
+    <div class="scoreboard">
+        <h3 style="margin-top: 0; color: white;">📊 Résumé exécutif - Indicateurs clés</h3>
+        <div style="display: flex; justify-content: space-around; flex-wrap: wrap; gap: 1rem;">
+            <div style="text-align: center;">
+                <div style="font-size: 2rem; font-weight: bold;">{most_polluted_city}</div>
+                <div style="font-size: 0.9rem; opacity: 0.9;">Zone la plus critique</div>
+                <div style="font-size: 1.2rem;">{most_polluted_value:.1f} µg/m³</div>
+            </div>
+            <div style="text-align: center;">
+                <div style="font-size: 2rem; font-weight: bold;">{dominant_pollutant}</div>
+                <div style="font-size: 0.9rem; opacity: 0.9;">Polluant dominant</div>
+                <div style="font-size: 1.2rem;">{dominant_pollutant_value:.1f} µg/m³</div>
+            </div>
+            <div style="text-align: center;">
+                <div style="font-size: 2rem; font-weight: bold;">{index_category['emoji']} {city_pollution_index}</div>
+                <div style="font-size: 0.9rem; opacity: 0.9;">Indice composite</div>
+                <div style="font-size: 1.2rem;">{index_category['label']}</div>
+            </div>
+            <div style="text-align: center;">
+                <div style="font-size: 2rem; font-weight: bold;">{len(df_filtered):,}</div>
+                <div style="font-size: 0.9rem; opacity: 0.9;">Mesures analysées</div>
+                <div style="font-size: 1.2rem;">n = {len(df_filtered):,}</div>
+            </div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
 
 st.markdown("---")
 
@@ -374,18 +583,14 @@ Explorons maintenant la répartition géographique de ces mesures...*
 
 st.markdown("---")
 
+st.markdown('<a id="carte"></a>', unsafe_allow_html=True)
 st.markdown("""
-## 🔍 Exploration des données
+## 🗺️ Cartographie de la pollution
 
-### Cartographie de la pollution en France
+Visualisation géographique des niveaux de pollution. Chaque point représente une station, colorée selon le niveau mesuré.
 """)
 
-st.markdown("""
-Commençons par visualiser la répartition géographique des stations de mesure et les niveaux de pollution observés. 
-Chaque point sur la carte représente une station, colorée selon le niveau de pollution mesuré par rapport aux seuils de l'OMS.
-
-*Utilisez les filtres dans la barre latérale pour explorer les données par polluant, ville ou période.*
-""")
+st.caption(f"📍 Nombre de mesures affichées : {len(df_filtered):,}")
 
 st.markdown("""
 <div class="legend-box">
@@ -424,360 +629,307 @@ Mais que nous disent réellement ces données ? Passons à l'analyse des tendanc
 
 st.markdown("---")
 
-st.markdown("""
-## 📊 Que révèlent les données ?
+st.markdown('<a id="analyse"></a>', unsafe_allow_html=True)
+st.markdown("## 📊 Analyse des données")
 
-### Les tendances et patterns cachés
-""")
-
-st.markdown("""
-### 🏆 Les villes les plus exposées
-
-Analysons d'abord quelles villes présentent les niveaux de pollution les plus préoccupants, 
-et celles où l'air est le plus pur.
-""")
-
-city_avg = df_filtered.groupby("City_Normalized")["Value"].mean().sort_values(ascending=False)
-
-col1, col2 = st.columns(2)
-
-with col1:
-    st.markdown("#### 🔴 Top 5 - plus polluées")
-    for i, (city, value) in enumerate(city_avg.head(5).items(), 1):
-        st.markdown(f"{i}. **{city}** - {value:.1f} µg/m³")
-
-with col2:
-    st.markdown("#### 🟢 Top 5 - moins polluées")
-    least_polluted = city_avg.tail(5).sort_values(ascending=True)
-    for i, (city, value) in enumerate(least_polluted.items(), 1):
-        st.markdown(f"{i}. **{city}** - {value:.1f} µg/m³")
-
-st.markdown("""
-<div class="insight-box">
-<strong>💡 Observation :</strong> On observe que les grandes métropoles et zones industrielles 
-présentent généralement des niveaux plus élevés, tandis que les zones rurales et côtières 
-bénéficient d'un air plus pur.
-</div>
-""", unsafe_allow_html=True)
-
-col1, col2 = st.columns(2)
-
-with col1:
-    top_cities = df_filtered.groupby("City_Normalized")["Value"].mean().nlargest(15).reset_index()
-    
-    fig_cities = px.bar(
-        top_cities,
-        x="Value",
-        y="City_Normalized",
-        orientation="h",
-        title="Top 15 villes - concentration moyenne",
-        labels={"Value": "Concentration (µg/m³)", "City_Normalized": "Ville"},
-        color="Value",
-        color_continuous_scale="RdYlGn_r",
-        template=template
-    )
-    fig_cities.update_layout(yaxis={'categoryorder': 'total ascending'})
-    st.plotly_chart(fig_cities, use_container_width=True)
-
-with col2:
-    city_pollutant = df_filtered.groupby(["City_Normalized", "Pollutant"])["Value"].mean().reset_index()
-    top_10_cities = df_filtered.groupby("City_Normalized")["Value"].mean().nlargest(10).index.tolist()
-    city_pollutant_top = city_pollutant[city_pollutant["City_Normalized"].isin(top_10_cities)]
-    
-    fig_heatmap = px.density_heatmap(
-        city_pollutant_top,
-        x="Pollutant",
-        y="City_Normalized",
-        z="Value",
-        title="Heatmap : villes vs polluants",
-        labels={"Value": "Concentration", "Pollutant": "Polluant", "City_Normalized": "Ville"},
-        color_continuous_scale="YlOrRd",
-        template=template
-    )
-    st.plotly_chart(fig_heatmap, use_container_width=True)
-
-st.markdown("""
-### 🆚 Comparaison détaillée entre villes
-
-Comparons maintenant les profils de pollution de différentes villes. 
-Le graphique radar permet de visualiser rapidement les forces et faiblesses de chaque ville selon les polluants.
-""")
-
-compare_cities = st.multiselect(
-    "Sélectionnez 2-3 villes à comparer",
-    options=all_cities,
-    default=[],
-    max_selections=3
+# Onglet pour choisir le type de visualisation
+analysis_view = st.radio(
+    "Type d'analyse",
+    options=["🏙️ Par ville", "🔬 Par polluant", "📅 Temporelle", "🔗 Corrélations"],
+    horizontal=True
 )
 
-if len(compare_cities) >= 2:
-    df_compare = df_filtered[df_filtered["City_Normalized"].isin(compare_cities)]
-    city_pollutant_compare = df_compare.groupby(["City_Normalized", "Pollutant"])["Value"].mean().reset_index()
+if analysis_view == "🏙️ Par ville":
+    st.markdown("### 🏆 Classement des villes avec indice de pollution composite")
+    
+    # Calcul de l'indice composite pour chaque ville
+    if len(df_filtered) > 0:
+        cities_list = df_filtered["City_Normalized"].unique()
+        city_indices = []
+        for city in cities_list:
+            idx = calculate_city_pollution_index(df_filtered, city)
+            city_count = len(df_filtered[df_filtered["City_Normalized"] == city])
+            city_indices.append({
+                "Ville": city, 
+                "Indice": idx,
+                "Catégorie": get_index_category(idx)["label"],
+                "n_mesures": city_count
+            })
+        
+        city_idx_df = pd.DataFrame(city_indices).sort_values("Indice", ascending=False)
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("#### 🔴 Top 10 - Indice le plus élevé")
+            top_10 = city_idx_df.head(10)
+            fig_index = px.bar(
+                top_10,
+                x="Indice",
+                y="Ville",
+                orientation="h",
+                title="Indice de pollution composite par ville",
+                labels={"Indice": "Indice composite (0-150)", "Ville": ""},
+                color="Indice",
+                color_continuous_scale="RdYlGn_r",
+                template=template
+            )
+            fig_index.update_layout(yaxis={'categoryorder': 'total ascending'})
+            st.plotly_chart(fig_index, use_container_width=True)
+            st.caption(f"Basé sur {len(cities_list)} villes, pondéré par dangerosité des polluants (PM2.5×1.5, NO2×1.3, PM10×1.2)")
+        
+        with col2:
+            # Heatmap villes vs polluants (simplifié)
+            city_pollutant = df_filtered.groupby(["City_Normalized", "Pollutant"])["Value"].mean().reset_index()
+            top_cities_list = city_idx_df.head(8)["Ville"].tolist()
+            city_pollutant_top = city_pollutant[city_pollutant["City_Normalized"].isin(top_cities_list)]
+            
+            fig_heatmap = px.density_heatmap(
+                city_pollutant_top,
+                x="Pollutant",
+                y="City_Normalized",
+                z="Value",
+                title="Profil de pollution des villes critiques",
+                labels={"Value": "µg/m³", "Pollutant": "Polluant", "City_Normalized": "Ville"},
+                color_continuous_scale="YlOrRd",
+                template=template
+            )
+            st.plotly_chart(fig_heatmap, use_container_width=True)
+
+elif analysis_view == "🔬 Par polluant":
+    st.markdown("### 🔬 Distribution et statistiques par polluant")
     
     col1, col2 = st.columns(2)
     
     with col1:
-        fig_radar = go.Figure()
-        for city in compare_cities:
-            city_data = city_pollutant_compare[city_pollutant_compare["City_Normalized"] == city]
-            fig_radar.add_trace(go.Scatterpolar(
-                r=city_data["Value"].tolist(),
-                theta=city_data["Pollutant"].tolist(),
-                fill='toself',
-                name=city
-            ))
-        fig_radar.update_layout(
-            polar=dict(radialaxis=dict(visible=True)),
-            title="Comparaison radar des polluants",
-            showlegend=True,
+        # Box plot des distributions
+        fig_box = px.box(
+            df_filtered,
+            x="Pollutant",
+            y="Value",
+            title="Distribution des concentrations",
+            labels={"Value": "Concentration (µg/m³)", "Pollutant": "Polluant"},
+            color="Pollutant",
+            color_discrete_map=get_color_discrete_map(selected_pollutants),
             template=template
         )
-        st.plotly_chart(fig_radar, use_container_width=True)
+        fig_box.update_layout(showlegend=False)
+        st.plotly_chart(fig_box, use_container_width=True)
     
     with col2:
-        cols = st.columns(len(compare_cities))
-        for i, city in enumerate(compare_cities):
-            with cols[i]:
-                st.markdown(f"**{city}**")
-                city_stats = df_compare[df_compare["City_Normalized"] == city]["Value"]
-                st.metric("Moyenne", f"{city_stats.mean():.1f} µg/m³")
-                st.metric("Maximum", f"{city_stats.max():.1f} µg/m³")
-                st.metric("Mesures", f"{len(city_stats)}")
-else:
-    st.info("👆 Sélectionnez au moins 2 villes ci-dessus pour les comparer.")
+        # Tableau statistique
+        pollutant_stats = df_filtered.groupby("Pollutant").agg({
+            "Value": ["mean", "median", "std", "count"]
+        }).round(2)
+        pollutant_stats.columns = ["Moyenne", "Médiane", "Écart-type", "Nb mesures"]
+        pollutant_stats = pollutant_stats.reset_index()
+        
+        # Ajouter seuil OMS
+        pollutant_stats["Seuil OMS"] = pollutant_stats["Pollutant"].apply(
+            lambda p: POLLUTANT_THRESHOLDS.get(p, {}).get("moderate", "-")
+        )
+        
+        st.dataframe(pollutant_stats, use_container_width=True, hide_index=True)
+        
+        st.markdown("""
+        <div class="insight-box">
+        <strong>💡 Interprétation</strong> : Un écart-type élevé indique une forte variabilité des mesures. 
+        Comparez la moyenne au seuil OMS pour évaluer le niveau de risque.
+        </div>
+        """, unsafe_allow_html=True)
 
-st.markdown("""
-### 🔬 Les polluants dominants
-
-Quels sont les polluants les plus mesurés et les plus préoccupants ?
-""")
-
-col1, col2 = st.columns(2)
-
-with col1:
-    pollutant_stats = df_filtered.groupby("Pollutant").agg({
-        "Value": ["mean", "max", "min", "std"]
-    }).round(2)
-    pollutant_stats.columns = ["Moyenne", "Maximum", "Minimum", "Écart-type"]
-    pollutant_stats = pollutant_stats.reset_index()
+elif analysis_view == "📅 Temporelle":
+    st.markdown("### 📈 Évolution temporelle")
     
-    fig_pie = px.pie(
-        df_filtered,
-        names="Pollutant",
-        title="Répartition des mesures par polluant",
-        color="Pollutant",
-        color_discrete_map={p: get_pollutant_info(p)["color"] for p in all_pollutants},
-        template=template
-    )
-    fig_pie.update_traces(textposition='inside', textinfo='percent+label')
-    st.plotly_chart(fig_pie, use_container_width=True)
-
-with col2:
-    fig_box = px.box(
-        df_filtered,
-        x="Pollutant",
-        y="Value",
-        title="Distribution des concentrations par polluant",
-        labels={"Value": "Concentration (µg/m³)", "Pollutant": "Polluant"},
-        color="Pollutant",
-        color_discrete_map={p: get_pollutant_info(p)["color"] for p in all_pollutants},
-        template=template
-    )
-    fig_box.update_layout(showlegend=False)
-    st.plotly_chart(fig_box, use_container_width=True)
-
-st.markdown("""
-<div class="insight-box">
-<strong>💡 Observation :</strong> Le NO2 (lié au trafic routier) et les particules fines (PM10, PM2.5) 
-dominent les mesures. L'ozone (O3) présente des pics importants, notamment en période estivale.
-</div>
-""", unsafe_allow_html=True)
-
-st.markdown("""
-### 📈 Évolution temporelle
-
-L'analyse temporelle révèle les tendances saisonnières et annuelles de la pollution.
-""")
-
-col1, col2 = st.columns(2)
-
-with col1:
-    df_monthly = df_filtered.groupby(["Year", "Month", "Pollutant"])["Value"].mean().reset_index()
-    df_monthly["Date"] = pd.to_datetime(df_monthly[["Year", "Month"]].assign(day=1))
+    # Switch mensuel/annuel
+    time_view = st.radio("Granularité", ["Mensuelle", "Annuelle"], horizontal=True)
     
-    fig_temporal = px.line(
-        df_monthly,
-        x="Date",
-        y="Value",
-        color="Pollutant",
-        title="Évolution mensuelle des polluants",
-        labels={"Value": "Concentration (µg/m³)", "Date": "Date", "Pollutant": "Polluant"},
-        color_discrete_map={p: get_pollutant_info(p)["color"] for p in all_pollutants},
-        template=template
-    )
-    fig_temporal.update_layout(
-        hovermode="x unified",
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-    )
+    if time_view == "Mensuelle":
+        df_temporal = df_filtered.groupby(["Year", "Month", "Pollutant"])["Value"].mean().reset_index()
+        df_temporal["Date"] = pd.to_datetime(df_temporal[["Year", "Month"]].assign(day=1))
+        
+        fig_temporal = px.line(
+            df_temporal,
+            x="Date",
+            y="Value",
+            color="Pollutant",
+            title="Évolution mensuelle des concentrations",
+            labels={"Value": "Concentration (µg/m³)", "Date": "", "Pollutant": "Polluant"},
+            color_discrete_map=get_color_discrete_map(selected_pollutants),
+            template=template
+        )
+        fig_temporal.update_layout(hovermode="x unified")
+    else:
+        df_temporal = df_filtered.groupby(["Year", "Pollutant"])["Value"].mean().reset_index()
+        
+        fig_temporal = px.bar(
+            df_temporal,
+            x="Year",
+            y="Value",
+            color="Pollutant",
+            title="Concentration moyenne par année",
+            labels={"Value": "Concentration (µg/m³)", "Year": "Année", "Pollutant": "Polluant"},
+            barmode="group",
+            color_discrete_map=get_color_discrete_map(selected_pollutants),
+            template=template
+        )
+    
     st.plotly_chart(fig_temporal, use_container_width=True)
-
-with col2:
-    df_yearly = df_filtered.groupby(["Year", "Pollutant"])["Value"].mean().reset_index()
     
-    fig_bar = px.bar(
-        df_yearly,
-        x="Year",
-        y="Value",
-        color="Pollutant",
-        title="Concentration moyenne annuelle",
-        labels={"Value": "Concentration (µg/m³)", "Year": "Année", "Pollutant": "Polluant"},
-        barmode="group",
-        color_discrete_map={p: get_pollutant_info(p)["color"] for p in all_pollutants},
-        template=template
-    )
-    st.plotly_chart(fig_bar, use_container_width=True)
+    st.markdown("""
+    <div class="insight-box">
+    <strong>💡 Tendances saisonnières</strong> : L'ozone augmente en été (réaction photochimique avec le soleil), 
+    tandis que les particules fines sont plus élevées en hiver (chauffage domestique).
+    </div>
+    """, unsafe_allow_html=True)
 
-st.markdown("""
-<div class="insight-box">
-<strong>💡 Observation :</strong> Les données montrent des variations saisonnières marquées : 
-l'ozone augmente en été (réaction photochimique), tandis que les particules fines sont plus élevées en hiver (chauffage).
-</div>
-""", unsafe_allow_html=True)
+elif analysis_view == "🔗 Corrélations":
+    st.markdown("### 🔗 Corrélations entre polluants")
+    
+    # Préparer les données pour la corrélation
+    if len(df_filtered) > 0 and len(selected_pollutants) >= 2:
+        # Pivoter pour avoir les polluants en colonnes
+        pivot_data = df_filtered.pivot_table(
+            values="Value",
+            index=["City_Normalized", "Date"],
+            columns="Pollutant",
+            aggfunc="mean"
+        ).dropna()
+        
+        if len(pivot_data) > 10:
+            corr_matrix = pivot_data.corr()
+            
+            fig_corr = px.imshow(
+                corr_matrix,
+                title="Matrice de corrélation entre polluants",
+                labels=dict(color="Corrélation"),
+                color_continuous_scale="RdBu_r",
+                zmin=-1, zmax=1,
+                template=template
+            )
+            fig_corr.update_layout(width=600, height=500)
+            st.plotly_chart(fig_corr, use_container_width=True)
+            
+            st.markdown("""
+            <div class="insight-box">
+            <strong>💡 Interprétation</strong> : 
+            <ul>
+                <li>Corrélation proche de <strong>+1</strong> : les polluants varient ensemble (sources communes)</li>
+                <li>Corrélation proche de <strong>-1</strong> : variation inverse (ex: NO et O3 en journée)</li>
+                <li>Corrélation proche de <strong>0</strong> : pas de relation directe</li>
+            </ul>
+            </div>
+            """, unsafe_allow_html=True)
+        else:
+            st.info("Pas assez de données communes pour calculer les corrélations. Essayez d'élargir les filtres.")
+    else:
+        st.info("Sélectionnez au moins 2 polluants pour voir les corrélations.")
 
 st.markdown("---")
 
-st.markdown("""
-## 🏙️ Vue d'ensemble des grandes métropoles
-
-Comparaison des niveaux de pollution dans les principales métropoles françaises.
-""")
+# Section métropoles simplifiée avec l'indice composite
+st.markdown("## 🏙️ Comparaison des grandes métropoles")
 
 df_metro = df_filtered[df_filtered["City_Normalized"].isin(MAJOR_CITIES)]
 
 if len(df_metro) > 0:
-    metro_pollutant_avg = df_metro.groupby(["City_Normalized", "Pollutant"])["Value"].mean().reset_index()
+    # Calcul de l'indice pour chaque métropole
+    metro_indices = []
+    for city in MAJOR_CITIES:
+        if city in df_metro["City_Normalized"].values:
+            idx = calculate_city_pollution_index(df_metro, city)
+            metro_indices.append({"Métropole": city, "Indice": idx})
+    
+    metro_df = pd.DataFrame(metro_indices).sort_values("Indice", ascending=False)
     
     fig_metro = px.bar(
-        metro_pollutant_avg,
-        x="Value",
-        y="City_Normalized",
-        color="Pollutant",
+        metro_df,
+        x="Indice",
+        y="Métropole",
         orientation="h",
-        title="Niveaux moyens de pollution par métropole",
-        labels={"Value": "Concentration (µg/m³)", "City_Normalized": "Ville", "Pollutant": "Polluant"},
-        barmode="group",
-        color_discrete_map={p: get_pollutant_info(p)["color"] for p in all_pollutants},
+        title="Indice de pollution composite par métropole",
+        labels={"Indice": "Indice composite", "Métropole": ""},
+        color="Indice",
+        color_continuous_scale="RdYlGn_r",
         template=template
     )
-    fig_metro.update_layout(
-        yaxis={'categoryorder': 'total ascending'},
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-    )
+    fig_metro.update_layout(yaxis={'categoryorder': 'total ascending'})
     st.plotly_chart(fig_metro, use_container_width=True)
+    st.caption("Indice pondéré : PM2.5 (×1.5), NO2 (×1.3), PM10 (×1.2). Score 0-50: bon, 50-100: modéré, >100: élevé")
 else:
     st.info("Aucune donnée disponible pour les grandes métropoles avec les filtres actuels.")
 
 st.markdown("---")
 
-st.markdown("""
-## ⚠️ Villes touchées par les polluants à impact élevé
+st.markdown('<a id="sante"></a>', unsafe_allow_html=True)
+st.markdown("## ❤️ Impact santé et alertes")
 
-Focus sur les polluants les plus dangereux : PM2.5, PM10 et NO2.
-""")
+# Toggle pour les populations sensibles
+sensitive_population = st.checkbox("👶 Afficher les recommandations pour populations sensibles (enfants, asthmatiques)")
 
 df_high_impact = df_filtered[df_filtered["Pollutant"].isin(HIGH_IMPACT_POLLUTANTS)]
 
 if len(df_high_impact) > 0:
     city_high_impact = df_high_impact.groupby(["City_Normalized", "Pollutant"])["Value"].mean().reset_index()
-    city_high_impact = city_high_impact.sort_values("Value", ascending=False).head(20)
+    city_high_impact = city_high_impact.sort_values("Value", ascending=False).head(15)
     
-    def get_risk_level(value, pollutant):
+    def get_risk_level(value, pollutant, sensitive=False):
         thresholds = POLLUTANT_THRESHOLDS.get(pollutant, {"good": 25, "moderate": 50})
-        if value < thresholds["good"]:
+        # Seuils plus stricts pour populations sensibles
+        if sensitive:
+            good_threshold = thresholds["good"] * 0.7
+            moderate_threshold = thresholds["moderate"] * 0.7
+        else:
+            good_threshold = thresholds["good"]
+            moderate_threshold = thresholds["moderate"]
+        
+        if value < good_threshold:
             return "🟢 Faible"
-        elif value < thresholds["moderate"]:
+        elif value < moderate_threshold:
             return "🟠 Modéré"
         else:
             return "🔴 Élevé"
     
-    def get_health_recommendation(value, pollutant):
+    def get_health_recommendation(value, pollutant, sensitive=False):
         thresholds = POLLUTANT_THRESHOLDS.get(pollutant, {"good": 25, "moderate": 50})
-        if value < thresholds["good"]:
-            return "Activités normales"
-        elif value < thresholds["moderate"]:
-            return "Limiter les efforts prolongés"
+        if sensitive:
+            good_threshold = thresholds["good"] * 0.7
+            moderate_threshold = thresholds["moderate"] * 0.7
         else:
-            return "Éviter les activités en extérieur"
+            good_threshold = thresholds["good"]
+            moderate_threshold = thresholds["moderate"]
+        
+        if value < good_threshold:
+            return "Activités normales" if not sensitive else "Activités normales avec surveillance"
+        elif value < moderate_threshold:
+            return "Limiter les efforts prolongés" if not sensitive else "Éviter les efforts, rester à l'intérieur"
+        else:
+            return "Éviter les activités en extérieur" if not sensitive else "Rester à l'intérieur, consulter si symptômes"
     
     city_high_impact["Niveau de risque"] = city_high_impact.apply(
-        lambda row: get_risk_level(row["Value"], row["Pollutant"]), axis=1
+        lambda row: get_risk_level(row["Value"], row["Pollutant"], sensitive_population), axis=1
     )
     city_high_impact["Recommandation"] = city_high_impact.apply(
-        lambda row: get_health_recommendation(row["Value"], row["Pollutant"]), axis=1
+        lambda row: get_health_recommendation(row["Value"], row["Pollutant"], sensitive_population), axis=1
     )
     
     display_df = city_high_impact.rename(columns={
         "City_Normalized": "Ville",
         "Pollutant": "Polluant",
-        "Value": "Valeur moyenne (µg/m³)"
+        "Value": "Concentration (µg/m³)"
     })
-    display_df["Valeur moyenne (µg/m³)"] = display_df["Valeur moyenne (µg/m³)"].round(1)
+    display_df["Concentration (µg/m³)"] = display_df["Concentration (µg/m³)"].round(1)
     
     st.dataframe(
-        display_df[["Ville", "Polluant", "Valeur moyenne (µg/m³)", "Niveau de risque", "Recommandation"]],
+        display_df[["Ville", "Polluant", "Concentration (µg/m³)", "Niveau de risque", "Recommandation"]],
         use_container_width=True,
         hide_index=True
     )
-    
-    col1, col2 = st.columns(2)
-    with col1:
-        fig_high_impact = px.bar(
-            city_high_impact.head(10),
-            x="Value",
-            y="City_Normalized",
-            color="Pollutant",
-            orientation="h",
-            title="Top 10 villes - polluants à impact élevé",
-            labels={"Value": "Concentration (µg/m³)", "City_Normalized": "Ville", "Pollutant": "Polluant"},
-            color_discrete_map={p: get_pollutant_info(p)["color"] for p in HIGH_IMPACT_POLLUTANTS},
-            template=template
-        )
-        fig_high_impact.update_layout(yaxis={'categoryorder': 'total ascending'})
-        st.plotly_chart(fig_high_impact, use_container_width=True)
-    
-    with col2:
-        high_impact_by_pollutant = df_high_impact.groupby("Pollutant")["Value"].mean().reset_index()
-        fig_pie_impact = px.pie(
-            high_impact_by_pollutant,
-            values="Value",
-            names="Pollutant",
-            title="Répartition des niveaux moyens par polluant",
-            color="Pollutant",
-            color_discrete_map={p: get_pollutant_info(p)["color"] for p in HIGH_IMPACT_POLLUTANTS},
-            template=template
-        )
-        st.plotly_chart(fig_pie_impact, use_container_width=True)
+    st.caption(f"n = {len(df_high_impact):,} mesures pour les polluants à impact élevé (PM2.5, PM10, NO2)")
 else:
     st.info("Aucune donnée disponible pour les polluants à impact élevé avec les filtres actuels.")
 
-st.markdown("---")
-
-st.markdown("""
-## ⚠️ Recommandations santé
-
-### Quand éviter le sport en extérieur ?
-- **PM2.5 > 25 µg/m³** : Limitez les efforts physiques prolongés
-- **PM10 > 50 µg/m³** : Évitez le jogging et le vélo
-- **NO2 > 40 µg/m³** : Restez à l'intérieur si possible
-- **O3 > 100 µg/m³** (été) : Pas d'activité sportive entre 12h et 16h
-
-### Conseils au quotidien
-- Consultez régulièrement les indices de qualité de l'air de votre ville
-- Limitez les activités physiques extérieures lors des pics de pollution
-- Privilégiez les déplacements à pied, vélo ou transports en commun
-- Aérez votre logement aux heures de moindre trafic (tôt le matin ou tard le soir)
-""")
-
+# Alertes dynamiques
 if len(df_filtered) > 0:
     alerts = []
     
@@ -786,8 +938,9 @@ if len(df_filtered) > 0:
         if len(df_poll) > 0:
             avg_value = df_poll["Value"].mean()
             thresholds = POLLUTANT_THRESHOLDS.get(pollutant, {"good": 25, "moderate": 50})
+            threshold = thresholds["moderate"] * (0.7 if sensitive_population else 1.0)
             
-            if avg_value > thresholds["moderate"]:
+            if avg_value > threshold:
                 if selected_cities:
                     city_name = ", ".join(selected_cities[:MAX_CITIES_IN_ALERT])
                     if len(selected_cities) > MAX_CITIES_IN_ALERT:
@@ -795,33 +948,31 @@ if len(df_filtered) > 0:
                 else:
                     city_name = "les zones sélectionnées"
                 
-                if pollutant == "PM2.5":
-                    recommendation = "Évitez les activités sportives en extérieur."
-                elif pollutant == "PM10":
-                    recommendation = "Limitez le jogging et le vélo en extérieur."
-                elif pollutant == "NO2":
-                    recommendation = "Restez à l'intérieur si possible."
-                else:
-                    recommendation = "Évitez les efforts physiques entre 12h et 16h."
+                recommendations = {
+                    "PM2.5": "Évitez les activités sportives en extérieur.",
+                    "PM10": "Limitez le jogging et le vélo en extérieur.",
+                    "NO2": "Restez à l'intérieur si possible.",
+                    "O3": "Évitez les efforts physiques entre 12h et 16h."
+                }
                 
-                alerts.append(f"⚠️ **Attention** : les niveaux de {pollutant} dans {city_name} sont actuellement élevés ({avg_value:.1f} µg/m³). {recommendation}")
+                alerts.append(f"⚠️ **{pollutant}** dans {city_name} : {avg_value:.1f} µg/m³. {recommendations[pollutant]}")
     
     if alerts:
-        st.markdown("### 🚨 Alertes basées sur vos filtres")
+        st.markdown("### 🚨 Alertes actives")
         for alert in alerts:
             st.warning(alert)
 
 st.markdown("---")
 
-st.markdown("""
-## 💡 Implications et recommandations
+st.markdown('<a id="recommandations"></a>', unsafe_allow_html=True)
+st.markdown("## 💡 Recommandations et actions")
 
-### Que faire face à ces constats ?
-""")
-
-highest_pollutant = df_filtered.groupby("Pollutant")["Value"].mean().idxmax()
-highest_city = df_filtered.groupby("City_Normalized")["Value"].mean().idxmax()
-info = get_pollutant_info(highest_pollutant)
+if len(df_filtered) > 0:
+    highest_pollutant = df_filtered.groupby("Pollutant")["Value"].mean().idxmax()
+    highest_city = df_filtered.groupby("City_Normalized")["Value"].mean().idxmax()
+else:
+    highest_pollutant = "N/A"
+    highest_city = "N/A"
 
 st.markdown("""
 <div class="chapter-box">
