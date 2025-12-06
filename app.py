@@ -12,12 +12,13 @@ from config.pollutants import (
     POLLUTANT_THRESHOLDS, POLLUTANT_INFO, MAJOR_CITIES, HIGH_IMPACT_POLLUTANTS,
     GUIDING_QUESTIONS, COLOR_PALETTE, get_pollutant_info, get_color_discrete_map,
     calculate_pollution_index, get_index_category, SENSITIVE_POPULATION_FACTOR,
-    INDEX_MODERATE_THRESHOLD, INDEX_HIGH_THRESHOLD
+    INDEX_MODERATE_THRESHOLD, INDEX_HIGH_THRESHOLD, MAX_NORMALIZED_SCORE
 )
 
 # Constantes de configuration de l'application
 RECENT_DATA_YEARS_BACK = 1  # Nombre d'années pour considérer les données comme récentes
 MIN_DATA_WARNING_THRESHOLD = 100  # Seuil pour afficher un avertissement de données limitées
+MAX_DISPLAYED_POLLUTANTS = 3  # Nombre maximum de polluants affichés dans le résumé exécutif
 
 st.set_page_config(
     page_title="Qualité de l'Air en France - L'air que nous respirons nous tue-t-il ?",
@@ -458,6 +459,9 @@ st.markdown("""
 <div style="text-align: center; padding: 2rem 0;">
     <h1 style="font-size: 2.8rem; margin-bottom: 0.5rem;">🌬️ L'air que nous respirons nous tue-t-il ?</h1>
     <p style="font-size: 1.3rem; color: #6c757d;">Une exploration des données de pollution atmosphérique en France</p>
+    <p style="font-size: 0.95rem; color: #888; margin-top: 0.5rem;">
+        <strong>🎯 Public cible :</strong> Citoyens, décideurs politiques et chercheurs
+    </p>
 </div>
 """, unsafe_allow_html=True)
 
@@ -483,6 +487,127 @@ Données couvrant la période du <strong>{date_min_data}</strong> au <strong>{da
 </div>
 """, unsafe_allow_html=True)
 
+# Introduction aux polluants (déplacé en haut pour contexte)
+with st.expander("📚 Comprendre les polluants en détail", expanded=False):
+    st.markdown("""
+    ### PM2.5 et PM10 (Particules fines) - ⚠️ IMPACT TRÈS ÉLEVÉ
+    - **Sources** : Trafic routier, chauffage au bois, industrie, agriculture
+    - **Effets santé** : Pénètrent profondément dans les poumons (PM2.5 jusqu'au sang)
+    - **Risques** : Maladies cardiovasculaires, cancers, asthme
+    - **Prévalence** : Très présent en hiver (chauffage) et en zone urbaine dense
+    - **Seuil OMS** : PM2.5: 15 µg/m³ | PM10: 45 µg/m³ (moyenne annuelle)
+    
+    ### NO2 (Dioxyde d'azote) - ⚠️ IMPACT ÉLEVÉ
+    - **Sources** : Principalement le trafic routier (moteurs diesel)
+    - **Effets santé** : Irritation des voies respiratoires, aggrave l'asthme
+    - **Risques** : Bronchites chroniques, diminution fonction pulmonaire
+    - **Prévalence** : Très élevé le long des grands axes routiers
+    - **Seuil OMS** : 25 µg/m³ (moyenne annuelle)
+    
+    ### O3 (Ozone) - ⚠️ IMPACT ÉLEVÉ EN ÉTÉ
+    - **Sources** : Formé par réaction chimique (NOx + COV + soleil)
+    - **Effets santé** : Irritation yeux et voies respiratoires, toux
+    - **Risques** : Crises d'asthme, diminution capacité respiratoire
+    - **Prévalence** : Pics en été lors des canicules
+    - **Seuil OMS** : 100 µg/m³ (moyenne sur 8h)
+    
+    ### SO2 (Dioxyde de soufre) - IMPACT MODÉRÉ
+    - **Sources** : Industrie, centrales thermiques, transport maritime
+    - **Effets santé** : Irritation des bronches
+    - **Risques** : Aggravation de l'asthme et bronchites
+    - **Prévalence** : En baisse grâce aux régulations, reste élevé près des industries
+    - **Seuil OMS** : 40 µg/m³ (moyenne sur 24h)
+    
+    ### CO (Monoxyde de carbone) - IMPACT LOCALISÉ
+    - **Sources** : Combustion incomplète (voitures, chauffage)
+    - **Effets santé** : Se fixe sur l'hémoglobine, réduit transport d'oxygène
+    - **Risques** : Maux de tête, vertiges, mortel à forte dose
+    - **Prévalence** : Rare en extérieur, problématique en intérieur
+    - **Seuil OMS** : 4 mg/m³ (moyenne sur 24h)
+    
+    ### NO (Monoxyde d'azote) - IMPACT MODÉRÉ
+    - **Sources** : Trafic, se transforme rapidement en NO2
+    - **Effets santé** : Moins toxique que NO2 directement
+    - **Prévalence** : Marqueur du trafic routier
+    - **Seuil OMS** : 25 µg/m³
+    """)
+
+# Data Dictionary expander
+with st.expander("📖 Dictionnaire des données", expanded=False):
+    st.markdown("""
+    | Colonne | Description | Type | Unité |
+    |---------|-------------|------|-------|
+    | `Pollutant` | Type de polluant mesuré | Catégorie | - |
+    | `Value` | Concentration mesurée | Numérique | µg/m³ |
+    | `City` | Ville de la station | Texte | - |
+    | `Location` | Nom de la station | Texte | - |
+    | `Coordinates` | Position GPS | Texte | lat, lon |
+    | `Last Updated` | Date/heure de mesure | Datetime | UTC |
+    | `Country` | Pays (France) | Texte | - |
+    
+    **Sources** : European Environment Agency (EEA) - OpenData Qualité de l'Air
+    
+    **Licence** : Open Data - Réutilisation libre avec attribution
+    """)
+
+# Data Quality Section
+with st.expander("🔍 Qualité des données", expanded=False):
+    st.markdown("### Validation et nettoyage des données")
+    
+    # Calculate data quality metrics
+    df_raw_stats = pd.read_csv("qualite-de-lair-france.csv", sep=";")
+    total_rows_raw = len(df_raw_stats)
+    total_rows_clean = len(df)
+    rows_removed = total_rows_raw - total_rows_clean
+    
+    col_q1, col_q2, col_q3 = st.columns(3)
+    with col_q1:
+        st.metric("📊 Lignes brutes", f"{total_rows_raw:,}")
+    with col_q2:
+        st.metric("✅ Lignes validées", f"{total_rows_clean:,}")
+    with col_q3:
+        st.metric("🗑️ Lignes filtrées", f"{rows_removed:,}", delta=f"-{rows_removed/total_rows_raw*100:.1f}%")
+    
+    st.markdown("#### Contrôles de qualité appliqués")
+    
+    # Missingness check
+    missing_coords = df_raw_stats["Coordinates"].isna().sum()
+    missing_value = df_raw_stats["Value"].isna().sum() if "Value" in df_raw_stats.columns else 0
+    
+    quality_checks = pd.DataFrame({
+        "Contrôle": [
+            "Coordonnées manquantes",
+            "Valeurs manquantes", 
+            "Valeurs aberrantes (< 0 ou > 1000)",
+            "Villes invalides (codes)",
+            "Polluants non-atmosphériques"
+        ],
+        "Statut": ["✅ Filtrées", "✅ Filtrées", "✅ Filtrées", "✅ Filtrées", "✅ Filtrées"],
+        "Impact": [
+            f"{missing_coords:,} lignes",
+            f"{missing_value:,} lignes",
+            "Variable",
+            "Variable", 
+            "Variable"
+        ]
+    })
+    st.dataframe(quality_checks, hide_index=True, use_container_width=True)
+    
+    # Duplicates check
+    duplicates = df.duplicated(subset=["City", "Location", "Pollutant", "Last Updated"]).sum()
+    st.markdown(f"**Doublons détectés** : {duplicates} (conservés pour analyse temporelle)")
+    
+    st.markdown("""
+    <div class="insight-box">
+    <strong>⚠️ Limitations connues</strong> :
+    <ul>
+        <li>Mesures ponctuelles (horaires) - non représentatives des moyennes annuelles</li>
+        <li>Couverture géographique inégale (plus dense en zones urbaines)</li>
+        <li>Certaines stations peuvent avoir des interruptions de service</li>
+    </ul>
+    </div>
+    """, unsafe_allow_html=True)
+
 # Questions directrices
 st.markdown('<a id="synthese"></a>', unsafe_allow_html=True)
 st.markdown("## 🎯 Questions clés pour guider notre exploration")
@@ -504,8 +629,11 @@ if len(df_filtered) > 0:
     most_polluted_city = df_filtered.groupby("City_Normalized")["Value"].mean().idxmax()
     most_polluted_value = df_filtered.groupby("City_Normalized")["Value"].mean().max()
     
-    dominant_pollutant = df_filtered.groupby("Pollutant")["Value"].mean().idxmax()
-    dominant_pollutant_value = df_filtered.groupby("Pollutant")["Value"].mean().max()
+    # Récupérer les polluants triés par concentration moyenne (du plus élevé au plus bas)
+    pollutants_by_value = df_filtered.groupby("Pollutant")["Value"].mean().sort_values(ascending=False)
+    # Afficher les polluants principaux
+    top_pollutants = pollutants_by_value.head(MAX_DISPLAYED_POLLUTANTS)
+    top_pollutants_display = " | ".join([f"{p}: {v:.1f}" for p, v in top_pollutants.items()])
     
     overall_avg = df_filtered["Value"].mean()
     
@@ -523,9 +651,9 @@ if len(df_filtered) > 0:
                 <div style="font-size: 1.2rem;">{most_polluted_value:.1f} µg/m³</div>
             </div>
             <div style="text-align: center;">
-                <div style="font-size: 2rem; font-weight: bold;">{dominant_pollutant}</div>
-                <div style="font-size: 0.9rem; opacity: 0.9;">Polluant dominant</div>
-                <div style="font-size: 1.2rem;">{dominant_pollutant_value:.1f} µg/m³</div>
+                <div style="font-size: 1.3rem; font-weight: bold;">{top_pollutants_display}</div>
+                <div style="font-size: 0.9rem; opacity: 0.9;">Polluants principaux (µg/m³)</div>
+                <div style="font-size: 1rem;">Triés par concentration moyenne</div>
             </div>
             <div style="text-align: center;">
                 <div style="font-size: 2rem; font-weight: bold;">{index_category['emoji']} {city_pollution_index}</div>
@@ -571,7 +699,7 @@ n_cities_total = df["City_Normalized"].nunique()
 date_min = df["Date"].min()
 date_max = df["Date"].max()
 
-col1, col2, col3, col4 = st.columns(4)
+col1, col2, col3, col4, col5 = st.columns(5)
 with col1:
     st.metric("🔬 Mesures totales", f"{len(df):,}")
 with col2:
@@ -579,7 +707,9 @@ with col2:
 with col3:
     st.metric("🏙️ Villes couvertes", n_cities_total)
 with col4:
-    st.metric("📅 Période", f"{date_min} → {date_max}")
+    st.metric("📅 Début", f"{date_min}")
+with col5:
+    st.metric("📅 Fin", f"{date_max}")
 
 st.markdown("""
 *Ces données nous permettent d'analyser la situation de la pollution atmosphérique sur l'ensemble du territoire français. 
@@ -674,9 +804,10 @@ if analysis_view == "🏙️ Par ville":
                 y="Ville",
                 orientation="h",
                 title="Indice de pollution composite par ville",
-                labels={"Indice": "Indice composite (0-150)", "Ville": ""},
+                labels={"Indice": f"Indice composite (0-{MAX_NORMALIZED_SCORE})", "Ville": ""},
                 color="Indice",
                 color_continuous_scale="RdYlGn_r",
+                range_color=[0, MAX_NORMALIZED_SCORE],
                 template=template
             )
             fig_index.update_layout(yaxis={'categoryorder': 'total ascending'})
@@ -964,6 +1095,87 @@ if len(df_filtered) > 0:
 
 st.markdown("---")
 
+# What-If Scenario Section
+st.markdown("## 🔮 Simulation What-If : Impact d'une réduction des émissions")
+
+st.markdown("""
+<div class="insight-box">
+<strong>💡 Hypothèse</strong> : Cette simulation montre l'impact potentiel d'une réduction des émissions 
+de polluants sur la qualité de l'air. Les valeurs sont calculées de manière linéaire à partir des données actuelles.
+</div>
+""", unsafe_allow_html=True)
+
+col_whatif1, col_whatif2 = st.columns([1, 2])
+
+with col_whatif1:
+    reduction_percent = st.slider(
+        "🎚️ Réduction des émissions (%)",
+        min_value=0,
+        max_value=50,
+        value=20,
+        step=5,
+        help="Simulez l'impact d'une réduction des émissions de polluants"
+    )
+    
+    whatif_pollutant = st.selectbox(
+        "Polluant à simuler",
+        options=selected_pollutants if selected_pollutants else ["NO2", "PM2.5", "PM10"],
+        index=0
+    )
+
+with col_whatif2:
+    if len(df_filtered) > 0 and whatif_pollutant:
+        df_poll_whatif = df_filtered[df_filtered["Pollutant"] == whatif_pollutant]
+        if len(df_poll_whatif) > 0:
+            current_avg = df_poll_whatif["Value"].mean()
+            simulated_avg = current_avg * (1 - reduction_percent / 100)
+            thresholds = POLLUTANT_THRESHOLDS.get(whatif_pollutant, {"good": 25, "moderate": 50})
+            
+            # Determine status change
+            def get_status(val, thresh):
+                if val < thresh["good"]:
+                    return "🟢 Bon"
+                elif val < thresh["moderate"]:
+                    return "🟠 Modéré"
+                else:
+                    return "🔴 Élevé"
+            
+            current_status = get_status(current_avg, thresholds)
+            simulated_status = get_status(simulated_avg, thresholds)
+            
+            col_s1, col_s2, col_s3 = st.columns(3)
+            with col_s1:
+                st.metric(
+                    f"📊 {whatif_pollutant} actuel",
+                    f"{current_avg:.1f} µg/m³",
+                    delta=None
+                )
+                st.caption(current_status)
+            with col_s2:
+                st.metric(
+                    f"🎯 {whatif_pollutant} simulé",
+                    f"{simulated_avg:.1f} µg/m³",
+                    delta=f"-{current_avg - simulated_avg:.1f}"
+                )
+                st.caption(simulated_status)
+            with col_s3:
+                st.metric(
+                    "📉 Seuil OMS",
+                    f"{thresholds['good']} µg/m³",
+                    delta=f"{simulated_avg - thresholds['good']:.1f}" if simulated_avg > thresholds['good'] else "✅ Conforme"
+                )
+            
+            # Progress bar showing progress toward OMS threshold
+            if current_avg > thresholds['good']:
+                progress_to_goal = min(1.0, max(0.0, (current_avg - simulated_avg) / (current_avg - thresholds['good'])))
+                st.progress(progress_to_goal, text=f"Progression vers le seuil OMS : {progress_to_goal*100:.0f}%")
+        else:
+            st.info(f"Aucune donnée disponible pour {whatif_pollutant}")
+    else:
+        st.info("Sélectionnez des polluants pour voir la simulation")
+
+st.markdown("---")
+
 st.markdown('<a id="recommandations"></a>', unsafe_allow_html=True)
 st.markdown("## 💡 Recommandations et actions")
 
@@ -1014,50 +1226,6 @@ with col2:
     </div>
     """, unsafe_allow_html=True)
 
-with st.expander("📚 Comprendre les polluants en détail"):
-    st.markdown("""
-    ### PM2.5 et PM10 (Particules fines) - ⚠️ IMPACT TRÈS ÉLEVÉ
-    - **Sources** : Trafic routier, chauffage au bois, industrie, agriculture
-    - **Effets santé** : Pénètrent profondément dans les poumons (PM2.5 jusqu'au sang)
-    - **Risques** : Maladies cardiovasculaires, cancers, asthme
-    - **Prévalence** : Très présent en hiver (chauffage) et en zone urbaine dense
-    - **Seuil OMS** : PM2.5: 15 µg/m³ | PM10: 45 µg/m³ (moyenne annuelle)
-    
-    ### NO2 (Dioxyde d'azote) - ⚠️ IMPACT ÉLEVÉ
-    - **Sources** : Principalement le trafic routier (moteurs diesel)
-    - **Effets santé** : Irritation des voies respiratoires, aggrave l'asthme
-    - **Risques** : Bronchites chroniques, diminution fonction pulmonaire
-    - **Prévalence** : Très élevé le long des grands axes routiers
-    - **Seuil OMS** : 25 µg/m³ (moyenne annuelle)
-    
-    ### O3 (Ozone) - ⚠️ IMPACT ÉLEVÉ EN ÉTÉ
-    - **Sources** : Formé par réaction chimique (NOx + COV + soleil)
-    - **Effets santé** : Irritation yeux et voies respiratoires, toux
-    - **Risques** : Crises d'asthme, diminution capacité respiratoire
-    - **Prévalence** : Pics en été lors des canicules
-    - **Seuil OMS** : 100 µg/m³ (moyenne sur 8h)
-    
-    ### SO2 (Dioxyde de soufre) - IMPACT MODÉRÉ
-    - **Sources** : Industrie, centrales thermiques, transport maritime
-    - **Effets santé** : Irritation des bronches
-    - **Risques** : Aggravation de l'asthme et bronchites
-    - **Prévalence** : En baisse grâce aux régulations, reste élevé près des industries
-    - **Seuil OMS** : 40 µg/m³ (moyenne sur 24h)
-    
-    ### CO (Monoxyde de carbone) - IMPACT LOCALISÉ
-    - **Sources** : Combustion incomplète (voitures, chauffage)
-    - **Effets santé** : Se fixe sur l'hémoglobine, réduit transport d'oxygène
-    - **Risques** : Maux de tête, vertiges, mortel à forte dose
-    - **Prévalence** : Rare en extérieur, problématique en intérieur
-    - **Seuil OMS** : 4 mg/m³ (moyenne sur 24h)
-    
-    ### NO (Monoxyde d'azote) - IMPACT MODÉRÉ
-    - **Sources** : Trafic, se transforme rapidement en NO2
-    - **Effets santé** : Moins toxique que NO2 directement
-    - **Prévalence** : Marqueur du trafic routier
-    - **Seuil OMS** : 25 µg/m³
-    """)
-
 st.markdown(f"""
 <div class="insight-box">
 <h4>🎯 Call to Action</h4>
@@ -1088,7 +1256,6 @@ st.markdown(f"""
     <p>📊 <strong>Source des données</strong> : European Environment Agency (EEA) - OpenData Qualité de l'Air</p>
     <p>📅 <strong>Dernière mise à jour des données</strong> : {last_update_str}</p>
     <p>🔬 <strong>Méthodologie</strong> : Données issues des stations de mesure officielles, agrégées et analysées pour cette application</p>
-    <p>🔗 <a href="https://github.com/ImAgainBack/proj_dataviz-streamlit2" target="_blank">Voir le projet sur GitHub</a></p>
     <p>💡 Cette application utilise des données publiques pour sensibiliser à la qualité de l'air.</p>
 </div>
 """, unsafe_allow_html=True)
